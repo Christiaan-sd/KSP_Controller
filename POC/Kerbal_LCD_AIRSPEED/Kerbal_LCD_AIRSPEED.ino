@@ -1,4 +1,4 @@
-#include "C:\GIT\KSP_Controller\libs\KerbalSimpit\src\KerbalSimpit.h"
+#include <KerbalSimpit.h>
 #include <LiquidCrystal.h>
 #include <Wire.h>
 #include <SerLCD.h> 
@@ -77,15 +77,15 @@ void loop() {
     if (myTemplimits.skinTempLimitPercentage > 30 || myTemplimits.tempLimitPercentage > 30) {
     LCD_Button_case = 98;
     
-      if (Error_lcd_reset_counter = 0) {
-      Error_lcd_reset_counter + 1;
+      
+      
       lcd.clear();
       lcd.setBacklight(255,0,0);
-      }
+      
 
     } else {
       LCD_Button_case = LCD_Button_case_before_alarm;
-      Error_lcd_reset_counter = 0;
+      
     }
 
 
