@@ -7,6 +7,18 @@ SerLCD lcd; // Initialize the library with default I2C address 0x72
 const int switchpinleft = 2;
 const int switchpinright = 3;
 
+// Custom LCD symbols
+byte deltaChar[8] = {
+  0b00000,
+  0b00100,
+  0b01010,
+  0b10001,
+  0b10001,
+  0b11111,
+  0b00000,
+  0b00000
+};
+
 int buttonStateRight;
 int buttonStateLeft;
 int lastButtonStateRight = HIGH;
@@ -22,13 +34,16 @@ unsigned long lastSent = 0;
 const unsigned int sendInterval = 1500;
 
 airspeedMessage myAirspeed;
+deltaVMessage myDeltaV;
 altitudeMessage myAltitude; // Added declaration for altitudeMessage
 velocityMessage myVelocity; // Added declaration for velocityMessage
 vesselPointingMessage myRotation;
 tempLimitMessage myTemplimits;
+atmoConditionsMessage myAtmoConditions;
+resourceMessage myElectric;
 
 unsigned long lastLCDUpdate = 0;
-const unsigned int LCDUpdateInterval = 250;  // Adjust this value to change the LCD update frequency
+const unsigned int LCDUpdateInterval = 750;  // Adjust this value to change the LCD update frequency
 
 unsigned long lastDebounceTimeRight = 0;
 unsigned long lastDebounceTimeLeft = 0;
@@ -39,6 +54,7 @@ void setup() {
   Wire.begin();
   lcd.begin(Wire);
   lcd.setFastBacklight(255, 255, 255);
+  lcd.createChar(0, deltaChar); // Create the custom character
   Wire.setClock(400000); //Optional - set I2C SCL to High Speed Mode of 400kHz
   pinMode(switchpinright, INPUT_PULLUP);
   pinMode(switchpinleft, INPUT_PULLUP);
@@ -59,6 +75,9 @@ void setup() {
   mySimpit.registerChannel(VELOCITY_MESSAGE);
   mySimpit.registerChannel(ROTATION_DATA_MESSAGE);
   mySimpit.registerChannel(TEMP_LIMIT_MESSAGE);
+  mySimpit.registerChannel(DELTAV_MESSAGE);
+  mySimpit.registerChannel(ATMO_CONDITIONS_MESSAGE);
+  mySimpit.registerChannel(ELECTRIC_MESSAGE);
 }
 
 void loop() {
@@ -84,7 +103,7 @@ void handleButtons(unsigned long now) {
   }
   if ((now - lastDebounceTimeRight) > debounceDelay) {
     if (reading_switchpinright == LOW && buttonStateRight == HIGH) {
-      if (LCD_Button_case < 4) {
+      if (LCD_Button_case < 8) {
         LCD_Button_case++;
         LCD_Button_case_before_alarm = LCD_Button_case;
         lcd.clear(); // clear screen for new display info
@@ -122,10 +141,10 @@ void handleTempAlarm() {
     }
   } else {
     if (LCD_alarm_state) {
-      lcd.setBacklight(255, 255, 255);
-      lcd.clear();
       LCD_alarm_state = false;
       LCD_Button_case = LCD_Button_case_before_alarm;
+      lcd.setBacklight(255, 255, 255);
+      lcd.clear();
     }
   }
 }
@@ -166,12 +185,45 @@ void updateLCD() {
       break;
     case 4:
       lcd.setCursor(0, 0);
-      lcd.print("Temp: ");
+      lcd.print("Part Temp %");
       lcd.print(myTemplimits.tempLimitPercentage);
       lcd.setCursor(0, 1);
-      lcd.print("Temp: ");
+      lcd.print("Skin Temp %");
       lcd.print(myTemplimits.skinTempLimitPercentage);
       break;
+    case 5:
+      lcd.setCursor(0, 0);
+      lcd.write(byte(0)); // Write the custom Delta character
+      lcd.print("V Stage ");
+      lcd.print(round(myDeltaV.stageDeltaV));
+      lcd.setCursor(0, 1);
+      lcd.write(byte(0)); // Write the custom Delta character
+      lcd.print("V Ship ");
+      lcd.print(round(myDeltaV.totalDeltaV));
+      break;
+    case 6:
+      lcd.setCursor(0, 0);
+      lcd.print("Air Temp ");
+      lcd.print(myAtmoConditions.temperature - 273.15);
+      lcd.setCursor(0, 1);
+      lcd.print("Air Density ");
+      lcd.print(myAtmoConditions.airDensity);
+      break;
+    case 7:
+      lcd.setCursor(0, 0);
+      lcd.print("Air Pres ");
+      lcd.print(myAtmoConditions.pressure);
+      lcd.setCursor(0, 1);
+      lcd.print("G-Forces  ");
+      lcd.print(myAirspeed.gForces);
+      break;
+    case 8:
+      lcd.setCursor(0, 0);
+      lcd.print("Power ");
+      lcd.print(myElectric.available);
+      break;
+
+
     case 98:
       lcd.setCursor(0, 0);
       lcd.print("PART TEMP!: ");
@@ -185,6 +237,12 @@ void updateLCD() {
 
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
   switch (messageType) {
+    case ATMO_CONDITIONS_MESSAGE:
+      if (msgSize == sizeof(atmoConditionsMessage)) {
+        myAtmoConditions = parseMessage<atmoConditionsMessage>(msg);
+      }
+      break;
+
     case AIRSPEED_MESSAGE:
       if (msgSize == sizeof(airspeedMessage)) {
         myAirspeed = parseMessage<airspeedMessage>(msg);
@@ -194,6 +252,12 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
     case ALTITUDE_MESSAGE:
       if (msgSize == sizeof(altitudeMessage)) {
         myAltitude = parseMessage<altitudeMessage>(msg);
+      }
+      break;
+
+    case DELTAV_MESSAGE:
+      if (msgSize == sizeof(deltaVMessage)) {
+        myDeltaV = parseMessage<deltaVMessage>(msg);
       }
       break;
 
@@ -208,6 +272,12 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
         myRotation = parseMessage<vesselPointingMessage>(msg);
       }
       break;
+
+    case ELECTRIC_MESSAGE:
+    if (msgSize == sizeof(resourceMessage)) {
+      myElectric = parseMessage<resourceMessage>(msg);
+    }
+    break;
 
     case TEMP_LIMIT_MESSAGE:
       if (msgSize == sizeof(tempLimitMessage)) {
