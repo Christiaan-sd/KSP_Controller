@@ -1,11 +1,12 @@
 #include <KerbalSimpit.h>
 #include <LiquidCrystal.h>
 #include <Wire.h>
-#include <SerLCD.h> 
+#include <SerLCD.h>
 
 SerLCD lcd; // Initialize the library with default I2C address 0x72
-int switchpinleft = 2;
-int switchpinright = 3;
+const int switchpinleft = 2;
+const int switchpinright = 3;
+
 int buttonStateRight;
 int buttonStateLeft;
 int lastButtonStateRight = HIGH;
@@ -13,13 +14,13 @@ int lastButtonStateLeft = HIGH;
 int LCD_Button_case = 0;
 int LCD_Button_case_before_alarm = 0;
 
-int LCD_state_change = 0;
+int LCD_alarm_state = 0;
 
 KerbalSimpit mySimpit(Serial);
 
 bool state = false;
 unsigned long lastSent = 0;
-unsigned int sendInterval = 1500;
+const unsigned int sendInterval = 1500;
 
 airspeedMessage myAirspeed;
 altitudeMessage myAltitude; // Added declaration for altitudeMessage
@@ -27,13 +28,12 @@ velocityMessage myVelocity; // Added declaration for velocityMessage
 vesselPointingMessage myRotation;
 tempLimitMessage myTemplimits;
 
-// Add these global variables
 unsigned long lastLCDUpdate = 0;
-unsigned int LCDUpdateInterval = 250;  // Adjust this value to change the LCD update frequency
+const unsigned int LCDUpdateInterval = 250;  // Adjust this value to change the LCD update frequency
 
 unsigned long lastDebounceTimeRight = 0;
 unsigned long lastDebounceTimeLeft = 0;
-unsigned long debounceDelay = 50; // Debounce delay in milliseconds
+const unsigned long debounceDelay = 50; // Debounce delay in milliseconds
 
 void setup() {
   Serial.begin(115200);
@@ -64,7 +64,18 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
+  
+  handleButtons(now);
+  handleTempAlarm();
+  mySimpit.update();
+  
+  if (now - lastLCDUpdate >= LCDUpdateInterval) {
+    updateLCD();
+    lastLCDUpdate = now;  // Update the last LCD update time
+  }
+}
 
+void handleButtons(unsigned long now) {
   int reading_switchpinright = digitalRead(switchpinright);
   int reading_switchpinleft = digitalRead(switchpinleft);
 
@@ -99,69 +110,69 @@ void loop() {
     buttonStateLeft = reading_switchpinleft;
   }
   lastButtonStateLeft = reading_switchpinleft;
+}
 
+void handleTempAlarm() {
   if (myTemplimits.skinTempLimitPercentage > 30 || myTemplimits.tempLimitPercentage > 30) {
     LCD_Button_case = 98;
-    lcd.clear();
     lcd.setBacklight(255, 0, 0);
+    lcd.clear();
   } else {
-    LCD_Button_case = LCD_Button_case_before_alarm;
-  }
 
-  mySimpit.update();
-  
-  // Update the LCD at the specified interval
-  if (now - lastLCDUpdate >= LCDUpdateInterval) {
-    updateLCD();
-    lastLCDUpdate = now;  // Update the last LCD update time
+    LCD_Button_case = LCD_Button_case_before_alarm;
   }
 }
 
 void updateLCD() {
-  
-
-  if (LCD_Button_case == 0) {
-    lcd.setCursor(0, 0);
-    lcd.print("MACH: ");
-    lcd.print(myAirspeed.mach);
-    lcd.setCursor(0, 1);
-    lcd.print("Airspeed: ");
-    lcd.print(round(myAirspeed.IAS));
-  } else if (LCD_Button_case == 1) {
-    lcd.setCursor(0, 0);
-    lcd.print("Sealevel: ");
-    lcd.print(round(myAltitude.sealevel));
-    lcd.setCursor(0, 1);
-    lcd.print("Surface: ");
-    lcd.print(round(myAltitude.surface));
-  } else if (LCD_Button_case == 2) {
-    lcd.setCursor(0, 0);
-    lcd.print("m/s: ");
-    lcd.print(round(myVelocity.surface));
-    lcd.setCursor(0, 1);
-    lcd.print("km/h: ");
-    lcd.print(round((myVelocity.surface * 3.6)));
-  } else if (LCD_Button_case == 3) {
-    lcd.setCursor(0, 0);
-    lcd.print("Heading: ");
-    lcd.print(myRotation.heading);
-    lcd.setCursor(0, 1);
-    lcd.print("Pitch: ");
-    lcd.print(myRotation.pitch);
-  } else if (LCD_Button_case == 4) {
-    lcd.setCursor(0, 0);
-    lcd.print("Temp: ");
-    lcd.print(myTemplimits.tempLimitPercentage);
-    lcd.setCursor(0, 1);
-    lcd.print("Temp: ");
-    lcd.print(myTemplimits.skinTempLimitPercentage);
-  } else if (LCD_Button_case == 98) {
-    lcd.setCursor(0, 0);
-    lcd.print("Temp ALARM!: ");
-    lcd.print(myTemplimits.tempLimitPercentage);
-    lcd.setCursor(0, 1);
-    lcd.print("Temp ALARM!: ");
-    lcd.print(myTemplimits.skinTempLimitPercentage);
+  switch (LCD_Button_case) {
+    case 0:
+      lcd.setCursor(0, 0);
+      lcd.print("MACH: ");
+      lcd.print(myAirspeed.mach);
+      lcd.setCursor(0, 1);
+      lcd.print("Airspeed: ");
+      lcd.print(round(myAirspeed.IAS));
+      break;
+    case 1:
+      lcd.setCursor(0, 0);
+      lcd.print("Sealevel: ");
+      lcd.print(round(myAltitude.sealevel));
+      lcd.setCursor(0, 1);
+      lcd.print("Surface: ");
+      lcd.print(round(myAltitude.surface));
+      break;
+    case 2:
+      lcd.setCursor(0, 0);
+      lcd.print("m/s: ");
+      lcd.print(round(myVelocity.surface));
+      lcd.setCursor(0, 1);
+      lcd.print("km/h: ");
+      lcd.print(round((myVelocity.surface * 3.6)));
+      break;
+    case 3:
+      lcd.setCursor(0, 0);
+      lcd.print("Heading: ");
+      lcd.print(myRotation.heading);
+      lcd.setCursor(0, 1);
+      lcd.print("Pitch: ");
+      lcd.print(myRotation.pitch);
+      break;
+    case 4:
+      lcd.setCursor(0, 0);
+      lcd.print("Temp: ");
+      lcd.print(myTemplimits.tempLimitPercentage);
+      lcd.setCursor(0, 1);
+      lcd.print("Temp: ");
+      lcd.print(myTemplimits.skinTempLimitPercentage);
+      break;
+    case 98:
+      lcd.setCursor(0, 0);
+      lcd.print("PART TEMP ALARM!: ");
+      lcd.print(myTemplimits.tempLimitPercentage);
+      lcd.setCursor(0, 1);
+      lcd.print("SKIN TEMP ALARM!: ");
+      lcd.print(myTemplimits.skinTempLimitPercentage);
+      break;
   }
 }
 
