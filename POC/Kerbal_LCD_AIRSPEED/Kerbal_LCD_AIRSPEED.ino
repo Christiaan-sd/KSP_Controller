@@ -34,7 +34,7 @@ void setup() {
   Serial.begin(115200);
   Wire.begin();
   lcd.begin(Wire);
-  lcd.setFastBacklight(255, 255, 255);
+  lcd.setFastBacklight(255, 0, 255);
   Wire.setClock(400000); //Optional - set I2C SCL to High Speed Mode of 400kHz
   pinMode(switchpin, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
