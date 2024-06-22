@@ -1,0 +1,5 @@
+{
+    "board": "arduino:avr:uno",
+    "port": "COM3",
+    "sketch": "POC\\Kerbal_LCD_AIRSPEED\\Kerbal_LCD_AIRSPEED.ino"
+}
