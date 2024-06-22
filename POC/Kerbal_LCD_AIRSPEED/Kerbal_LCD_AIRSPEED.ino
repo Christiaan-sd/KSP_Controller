@@ -1,7 +1,7 @@
-#include "KerbalSimpit.h"
+#include "C:\GIT\KSP_Controller\libs\KerbalSimpit\src\KerbalSimpit.h"
 #include <LiquidCrystal.h>
 #include <Wire.h>
-#include <SerLCD.h>
+#include <SerLCD.h> 
 
 SerLCD lcd; // Initialize the library with default I2C address 0x72
 
