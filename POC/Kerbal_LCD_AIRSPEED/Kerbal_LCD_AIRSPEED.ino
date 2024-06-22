@@ -13,8 +13,7 @@ int lastButtonStateRight = HIGH;
 int lastButtonStateLeft = HIGH;
 int LCD_Button_case = 0;
 int LCD_Button_case_before_alarm = 0;
-
-int LCD_alarm_state = 0;
+bool LCD_alarm_state = false;
 
 KerbalSimpit mySimpit(Serial);
 
@@ -114,12 +113,20 @@ void handleButtons(unsigned long now) {
 
 void handleTempAlarm() {
   if (myTemplimits.skinTempLimitPercentage > 30 || myTemplimits.tempLimitPercentage > 30) {
-    LCD_Button_case = 98;
-    lcd.setBacklight(255, 0, 0);
-    lcd.clear();
+    if (!LCD_alarm_state) {
+      LCD_Button_case_before_alarm = LCD_Button_case; // Save the current state before alarm
+      LCD_Button_case = 98;
+      LCD_alarm_state = true;
+      lcd.setBacklight(255, 0, 0);
+      lcd.clear();
+    }
   } else {
-
-    LCD_Button_case = LCD_Button_case_before_alarm;
+    if (LCD_alarm_state) {
+      lcd.setBacklight(255, 255, 255);
+      lcd.clear();
+      LCD_alarm_state = false;
+      LCD_Button_case = LCD_Button_case_before_alarm;
+    }
   }
 }
 
@@ -167,10 +174,10 @@ void updateLCD() {
       break;
     case 98:
       lcd.setCursor(0, 0);
-      lcd.print("PART TEMP ALARM!: ");
+      lcd.print("PART TEMP!: ");
       lcd.print(myTemplimits.tempLimitPercentage);
       lcd.setCursor(0, 1);
-      lcd.print("SKIN TEMP ALARM!: ");
+      lcd.print("SKIN TEMP!: ");
       lcd.print(myTemplimits.skinTempLimitPercentage);
       break;
   }
