@@ -149,6 +149,7 @@ void handleTempAlarm() {
   }
 }
 
+
 void updateLCD() {
   switch (LCD_Button_case) {
     case 0:
