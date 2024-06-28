@@ -26,6 +26,7 @@ int lastButtonStateLeft = HIGH;
 int LCD_Button_case = 0;
 int LCD_Button_case_before_alarm = 0;
 bool LCD_alarm_state = false;
+bool LCD_alarm_state_overide = false;
 
 KerbalSimpit mySimpit(Serial);
 
@@ -43,7 +44,7 @@ atmoConditionsMessage myAtmoConditions;
 resourceMessage myElectric;
 
 unsigned long lastLCDUpdate = 0;
-const unsigned int LCDUpdateInterval = 750;  // Adjust this value to change the LCD update frequency
+const unsigned int LCDUpdateInterval = 125;  // Adjust this value to change the LCD update frequency
 
 unsigned long lastDebounceTimeRight = 0;
 unsigned long lastDebounceTimeLeft = 0;
@@ -60,6 +61,10 @@ void setup() {
   pinMode(switchpinleft, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
+  lcd.clear();
+  lcd.print("KSP CONTROLLER!");
+  lcd.setCursor(0, 1);
+  lcd.print("Ready to connect");
 
   while (!mySimpit.init()) {
     delay(50);
@@ -107,6 +112,13 @@ void handleButtons(unsigned long now) {
         LCD_Button_case++;
         LCD_Button_case_before_alarm = LCD_Button_case;
         lcd.clear(); // clear screen for new display info
+        if (LCD_alarm_state == true) {
+          LCD_alarm_state_overide = false;
+          LCD_alarm_state = false;
+          LCD_Button_case = 0;
+          lcd.clear();
+          lcd.setBacklight(255, 255, 255);
+        }
       }
     }
     buttonStateRight = reading_switchpinright;
@@ -123,6 +135,13 @@ void handleButtons(unsigned long now) {
         LCD_Button_case--;
         LCD_Button_case_before_alarm = LCD_Button_case;
         lcd.clear(); // clear screen for new display info
+        if (LCD_alarm_state == true) {
+          LCD_alarm_state_overide = true;
+          LCD_alarm_state = false;
+          LCD_Button_case = 0;
+          lcd.clear();
+          lcd.setBacklight(255, 255, 255);
+        }
       }
     }
     buttonStateLeft = reading_switchpinleft;
@@ -131,8 +150,8 @@ void handleButtons(unsigned long now) {
 }
 
 void handleTempAlarm() {
-  if (myTemplimits.skinTempLimitPercentage > 30 || myTemplimits.tempLimitPercentage > 30) {
-    if (!LCD_alarm_state) {
+  if (myTemplimits.skinTempLimitPercentage > 40 || myTemplimits.tempLimitPercentage > 40) {
+    if (!LCD_alarm_state && !LCD_alarm_state_overide) {
       LCD_Button_case_before_alarm = LCD_Button_case; // Save the current state before alarm
       LCD_Button_case = 98;
       LCD_alarm_state = true;
@@ -142,13 +161,13 @@ void handleTempAlarm() {
   } else {
     if (LCD_alarm_state) {
       LCD_alarm_state = false;
+      LCD_alarm_state_overide = false; 
       LCD_Button_case = LCD_Button_case_before_alarm;
       lcd.setBacklight(255, 255, 255);
       lcd.clear();
     }
   }
 }
-
 
 void updateLCD() {
   switch (LCD_Button_case) {
@@ -223,8 +242,6 @@ void updateLCD() {
       lcd.print("Power ");
       lcd.print(myElectric.available);
       break;
-
-
     case 98:
       lcd.setCursor(0, 0);
       lcd.print("PART TEMP!: ");
@@ -243,43 +260,36 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
         myAtmoConditions = parseMessage<atmoConditionsMessage>(msg);
       }
       break;
-
     case AIRSPEED_MESSAGE:
       if (msgSize == sizeof(airspeedMessage)) {
         myAirspeed = parseMessage<airspeedMessage>(msg);
       }
       break;
-
     case ALTITUDE_MESSAGE:
       if (msgSize == sizeof(altitudeMessage)) {
         myAltitude = parseMessage<altitudeMessage>(msg);
       }
       break;
-
     case DELTAV_MESSAGE:
       if (msgSize == sizeof(deltaVMessage)) {
         myDeltaV = parseMessage<deltaVMessage>(msg);
       }
       break;
-
     case VELOCITY_MESSAGE:
       if (msgSize == sizeof(velocityMessage)) {
         myVelocity = parseMessage<velocityMessage>(msg);
       }
       break;
-
     case ROTATION_DATA_MESSAGE:
       if (msgSize == sizeof(vesselPointingMessage)) {
         myRotation = parseMessage<vesselPointingMessage>(msg);
       }
       break;
-
     case ELECTRIC_MESSAGE:
-    if (msgSize == sizeof(resourceMessage)) {
-      myElectric = parseMessage<resourceMessage>(msg);
-    }
-    break;
-
+      if (msgSize == sizeof(resourceMessage)) {
+        myElectric = parseMessage<resourceMessage>(msg);
+      }
+      break;
     case TEMP_LIMIT_MESSAGE:
       if (msgSize == sizeof(tempLimitMessage)) {
         myTemplimits = parseMessage<tempLimitMessage>(msg);
