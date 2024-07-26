@@ -4,8 +4,8 @@
 #include <SerLCD.h>
 
 SerLCD lcd; // Initialize the library with default I2C address 0x72
-const int switchpinleft = 2;
-const int switchpinright = 3;
+const int LCD_switchpinleft = 2;
+const int LCD_switchpinright = 3;
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -19,12 +19,12 @@ byte deltaChar[8] = {
   0b00000
 };
 
-int buttonStateRight;
-int buttonStateLeft;
-int lastButtonStateRight = HIGH;
-int lastButtonStateLeft = HIGH;
-int LCD_Button_case = 0;
-int LCD_Button_case_before_alarm = 0;
+int LCD_SwitchButtonStateRight;
+int LCD_SwitchButtonStateLeft;
+int LCD_Last_Switch_Button_State_Right = HIGH;
+int LCD_Last_Switch_Button_State_Left = HIGH;
+int LCD_Screen_Case = 0;
+int LCD_Screen_Case_Before_Alarm = 0;
 bool LCD_alarm_state = false;
 bool LCD_alarm_state_overide = false;
 
@@ -57,8 +57,8 @@ void setup() {
   lcd.setFastBacklight(255, 255, 255);
   lcd.createChar(0, deltaChar); // Create the custom character
   Wire.setClock(400000); //Optional - set I2C SCL to High Speed Mode of 400kHz
-  pinMode(switchpinright, INPUT_PULLUP);
-  pinMode(switchpinleft, INPUT_PULLUP);
+  pinMode(LCD_switchpinright, INPUT_PULLUP);
+  pinMode(LCD_switchpinleft, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
   lcd.clear();
@@ -99,61 +99,61 @@ void loop() {
 }
 
 void handleButtons(unsigned long now) {
-  int reading_switchpinright = digitalRead(switchpinright);
-  int reading_switchpinleft = digitalRead(switchpinleft);
+  int reading_LCD_switchpinright = digitalRead(LCD_switchpinright);
+  int reading_LCD_switchpinleft = digitalRead(LCD_switchpinleft);
 
   // Debounce the right button
-  if (reading_switchpinright != lastButtonStateRight) {
+  if (reading_LCD_switchpinright != LCD_Last_Switch_Button_State_Right) {
     lastDebounceTimeRight = now;
   }
   if ((now - lastDebounceTimeRight) > debounceDelay) {
-    if (reading_switchpinright == LOW && buttonStateRight == HIGH) {
-      if (LCD_Button_case < 8) {
-        LCD_Button_case++;
-        LCD_Button_case_before_alarm = LCD_Button_case;
+    if (reading_LCD_switchpinright == LOW && LCD_SwitchButtonStateRight == HIGH) {
+      if (LCD_Screen_Case < 8) {
+        LCD_Screen_Case++;
+        LCD_Screen_Case_Before_Alarm = LCD_Screen_Case;
         lcd.clear(); // clear screen for new display info
         if (LCD_alarm_state == true) {
           LCD_alarm_state_overide = false;
           LCD_alarm_state = false;
-          LCD_Button_case = 0;
+          LCD_Screen_Case = 0;
           lcd.clear();
           lcd.setBacklight(255, 255, 255);
         }
       }
     }
-    buttonStateRight = reading_switchpinright;
+    LCD_SwitchButtonStateRight = reading_LCD_switchpinright;
   }
-  lastButtonStateRight = reading_switchpinright;
+  LCD_Last_Switch_Button_State_Right = reading_LCD_switchpinright;
 
   // Debounce the left button
-  if (reading_switchpinleft != lastButtonStateLeft) {
+  if (reading_LCD_switchpinleft != LCD_Last_Switch_Button_State_Left) {
     lastDebounceTimeLeft = now;
   }
   if ((now - lastDebounceTimeLeft) > debounceDelay) {
-    if (reading_switchpinleft == LOW && buttonStateLeft == HIGH) {
-      if (LCD_Button_case > 0) {
-        LCD_Button_case--;
-        LCD_Button_case_before_alarm = LCD_Button_case;
+    if (reading_LCD_switchpinleft == LOW && LCD_SwitchButtonStateLeft == HIGH) {
+      if (LCD_Screen_Case > 0) {
+        LCD_Screen_Case--;
+        LCD_Screen_Case_Before_Alarm = LCD_Screen_Case;
         lcd.clear(); // clear screen for new display info
         if (LCD_alarm_state == true) {
           LCD_alarm_state_overide = true;
           LCD_alarm_state = false;
-          LCD_Button_case = 0;
+          LCD_Screen_Case = 0;
           lcd.clear();
           lcd.setBacklight(255, 255, 255);
         }
       }
     }
-    buttonStateLeft = reading_switchpinleft;
+    LCD_SwitchButtonStateLeft = reading_LCD_switchpinleft;
   }
-  lastButtonStateLeft = reading_switchpinleft;
+  LCD_Last_Switch_Button_State_Left = reading_LCD_switchpinleft;
 }
 
 void handleTempAlarm() {
   if (myTemplimits.skinTempLimitPercentage > 40 || myTemplimits.tempLimitPercentage > 40) {
     if (!LCD_alarm_state && !LCD_alarm_state_overide) {
-      LCD_Button_case_before_alarm = LCD_Button_case; // Save the current state before alarm
-      LCD_Button_case = 98;
+      LCD_Screen_Case_Before_Alarm = LCD_Screen_Case; // Save the current state before alarm
+      LCD_Screen_Case = 98;
       LCD_alarm_state = true;
       lcd.setBacklight(255, 0, 0);
       lcd.clear();
@@ -162,7 +162,7 @@ void handleTempAlarm() {
     if (LCD_alarm_state) {
       LCD_alarm_state = false;
       LCD_alarm_state_overide = false; 
-      LCD_Button_case = LCD_Button_case_before_alarm;
+      LCD_Screen_Case = LCD_Screen_Case_Before_Alarm;
       lcd.setBacklight(255, 255, 255);
       lcd.clear();
     }
@@ -170,7 +170,7 @@ void handleTempAlarm() {
 }
 
 void updateLCD() {
-  switch (LCD_Button_case) {
+  switch (LCD_Screen_Case) {
     case 0:
       lcd.setCursor(0, 0);
       lcd.print("MACH: ");

@@ -17,7 +17,7 @@
 // Set the pin numbers:
 const int PITCH_PIN = A1;    // the pin used for controlling pitch
 const int ROLL_PIN = A2;     // the pin used for controlling roll
-const int YAW_PIN = A3;     // the pin used for controlling roll
+const int YAW_PIN = A3;     // the pin used for controlling YAW
 
 // Declare a KerbalSimpit object that will
 // communicate using the "Serial" device.
