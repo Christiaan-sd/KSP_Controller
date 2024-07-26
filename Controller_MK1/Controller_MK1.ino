@@ -3,9 +3,10 @@
 #include <Wire.h>
 #include <SerLCD.h>
 
-SerLCD lcd; // Initialize the library with default I2C address 0x72
-const int LCD_switchpinleft = 2;
-const int LCD_switchpinright = 3;
+// Set the pin numbers:
+const int PITCH_PIN = A1;    // the pin used for controlling pitch
+const int ROLL_PIN = A2;     // the pin used for controlling roll
+const int YAW_PIN = A3;      // the pin used for controlling YAW
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -18,6 +19,10 @@ byte deltaChar[8] = {
   0b00000,
   0b00000
 };
+
+SerLCD lcd; // Initialize the library with default I2C address 0x72
+const int LCD_switchpinleft = 2;
+const int LCD_switchpinright = 3;
 
 int LCD_SwitchButtonStateRight;
 int LCD_SwitchButtonStateLeft;
@@ -96,6 +101,9 @@ void loop() {
     updateLCD();
     lastLCDUpdate = now;  // Update the last LCD update time
   }
+  
+  // Send at each loop a message to control the throttle and the pitch/roll axis.
+  sendRotationCommands();
 }
 
 void handleButtons(unsigned long now) {
@@ -253,6 +261,25 @@ void updateLCD() {
   }
 }
 
+void sendRotationCommands() {
+  rotationMessage rot_msg;
+  // Read the values of the potentiometers
+  int reading_pitch = analogRead(PITCH_PIN);
+  int reading_roll = analogRead(ROLL_PIN);
+  int reading_yaw = analogRead(YAW_PIN);
+  
+  // Convert them in KerbalSimpit range
+  int16_t pitch = map(reading_pitch, 0, 1023, INT16_MIN, INT16_MAX);
+  int16_t roll = map(reading_roll, 0, 1023, INT16_MIN, INT16_MAX);
+  int16_t yaw = map(reading_yaw, 0, 1023, INT16_MIN, INT16_MAX);
+  // Put those values in the message
+  rot_msg.setPitch(pitch);
+  rot_msg.setRoll(roll);
+  rot_msg.setYaw(yaw);
+  // Send the message
+  mySimpit.send(ROTATION_MESSAGE, rot_msg);
+}
+
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
   switch (messageType) {
     case ATMO_CONDITIONS_MESSAGE:
@@ -297,3 +324,4 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
       break;
   }
 }
+
