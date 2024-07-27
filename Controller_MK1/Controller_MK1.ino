@@ -3,7 +3,12 @@
 #include <Wire.h>
 #include <SerLCD.h>
 
+// Declare a KerbalSimpit object that will
+// communicate using the "Serial" device.
+KerbalSimpit mySimpit(Serial);
+
 // Set the pin numbers:
+const int THROTTLE_PIN = A0; // the pin used for controlling throttle
 const int PITCH_PIN = A1;    // the pin used for controlling pitch
 const int ROLL_PIN = A2;     // the pin used for controlling roll
 const int YAW_PIN = A3;      // the pin used for controlling YAW
@@ -33,7 +38,7 @@ int LCD_Screen_Case_Before_Alarm = 0;
 bool LCD_alarm_state = false;
 bool LCD_alarm_state_overide = false;
 
-KerbalSimpit mySimpit(Serial);
+
 
 bool state = false;
 unsigned long lastSent = 0;
@@ -55,6 +60,8 @@ unsigned long lastDebounceTimeRight = 0;
 unsigned long lastDebounceTimeLeft = 0;
 const unsigned long debounceDelay = 50; // Debounce delay in milliseconds
 
+bool isConnected = false;
+
 void setup() {
   Serial.begin(115200);
   Wire.begin();
@@ -71,9 +78,36 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print("Ready to connect");
 
-  while (!mySimpit.init()) {
-    delay(50);
+  connectToKSP();
+}
+
+void loop() {
+  unsigned long now = millis();
+  
+  handleButtons(now);
+  handleTempAlarm();
+  mySimpit.update();
+
+  if (now - lastLCDUpdate >= LCDUpdateInterval) {
+    updateLCD();
+    lastLCDUpdate = now;  // Update the last LCD update time
   }
+  
+  // Reconnect if disconnected
+  if (!isConnected) {
+    connectToKSP();
+  }
+  
+  // Send at each loop a message to control the throttle and the pitch/roll axis.
+  sendRotationCommands();
+  sendThrottleCommands();
+}
+
+void connectToKSP() {
+  while (!mySimpit.init()) {
+    delay(250);
+  }
+  isConnected = true;
   digitalWrite(LED_BUILTIN, LOW);
   mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
   lcd.clear();
@@ -88,22 +122,6 @@ void setup() {
   mySimpit.registerChannel(DELTAV_MESSAGE);
   mySimpit.registerChannel(ATMO_CONDITIONS_MESSAGE);
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
-}
-
-void loop() {
-  unsigned long now = millis();
-  
-  handleButtons(now);
-  handleTempAlarm();
-  mySimpit.update();
-  
-  if (now - lastLCDUpdate >= LCDUpdateInterval) {
-    updateLCD();
-    lastLCDUpdate = now;  // Update the last LCD update time
-  }
-  
-  // Send at each loop a message to control the throttle and the pitch/roll axis.
-  sendRotationCommands();
 }
 
 void handleButtons(unsigned long now) {
@@ -261,17 +279,54 @@ void updateLCD() {
   }
 }
 
+void sendThrottleCommands(){
+  // Send at each loop a message to control the throttle and the pitch/roll axis.
+  
+  throttleMessage throttle_msg;
+  // Read the value of the potentiometer
+  int reading = analogRead(THROTTLE_PIN);
+  // Convert it in KerbalSimpit Range
+  throttle_msg.throttle = map(reading, 0, 1023, INT16_MAX, 0);
+
+  // Send the message
+  mySimpit.send(THROTTLE_MESSAGE, throttle_msg);
+  
+}
+
 void sendRotationCommands() {
   rotationMessage rot_msg;
   // Read the values of the potentiometers
   int reading_pitch = analogRead(PITCH_PIN);
   int reading_roll = analogRead(ROLL_PIN);
   int reading_yaw = analogRead(YAW_PIN);
-  
-  // Convert them in KerbalSimpit range
-  int16_t pitch = map(reading_pitch, 0, 1023, INT16_MIN, INT16_MAX);
-  int16_t roll = map(reading_roll, 0, 1023, INT16_MIN, INT16_MAX);
-  int16_t yaw = map(reading_yaw, 0, 1023, INT16_MIN, INT16_MAX);
+
+  // Deadzone size
+  const int DEADZONE = 10; // Adjust this value as needed
+
+  // Calculate deadzone for pitch
+  int16_t pitch = 0;
+  if (reading_pitch > (512 + DEADZONE)) {
+    pitch = map(reading_pitch, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (reading_pitch < (512 - DEADZONE)) {
+    pitch = map(reading_pitch, 0, 512 - DEADZONE, INT16_MIN, 0);
+  }
+
+  // Calculate deadzone for roll
+  int16_t roll = 0;
+  if (reading_roll > (512 + DEADZONE)) {
+    roll = map(reading_roll, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (reading_roll < (512 - DEADZONE)) {
+    roll = map(reading_roll, 0, 512 - DEADZONE, INT16_MIN, 0);
+  }
+
+  // Calculate deadzone for yaw
+  int16_t yaw = 0;
+  if (reading_yaw > (512 + DEADZONE)) {
+    yaw = map(reading_yaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (reading_yaw < (512 - DEADZONE)) {
+    yaw = map(reading_yaw, 0, 512 - DEADZONE, INT16_MIN, 0);
+  }
+
   // Put those values in the message
   rot_msg.setPitch(pitch);
   rot_msg.setRoll(roll);
@@ -279,6 +334,7 @@ void sendRotationCommands() {
   // Send the message
   mySimpit.send(ROTATION_MESSAGE, rot_msg);
 }
+
 
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
   switch (messageType) {
@@ -324,4 +380,3 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
       break;
   }
 }
-
