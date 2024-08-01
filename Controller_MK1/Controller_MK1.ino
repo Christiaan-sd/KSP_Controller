@@ -12,15 +12,22 @@ const int YAW_PIN = A3;            // the pin used for controlling yaw
 const int TRANSLATE_X_PIN = A5;    // the pin used for controlling translation X
 const int TRANSLATE_Y_PIN = A6;    // the pin used for controlling translation Y
 const int TRANSLATE_Z_PIN = A4;    // the pin used for controlling translation Z
-const int JOYSTICK_BUTTON_TRANSLATION = 4;
-const int JOYSTICK_BUTTON_ROTATION = 5;
+const int JOYSTICK_BUTTON_TRANSLATION = 5;
+const int JOYSTICK_BUTTON_ROTATION = 4;
 const int LCD_SWITCH_PIN_LEFT = 2;
 const int LCD_SWITCH_PIN_RIGHT = 3;
 const unsigned long DEBOUNCE_DELAY = 50; // Debounce delay in milliseconds
 const unsigned int LCD_UPDATE_INTERVAL = 125;  // LCD update frequency
 const unsigned int SEND_INTERVAL = 1500;
 const int DEADZONE = 20; // Deadzone for joystick inputs
-    
+const int SMALL_INCREMENT = 1000; // Adjust this camera responsivenes value as needed
+int16_t prevPitch = 0;
+int16_t prevYaw = 0;
+int16_t prevZoom = 0;
+const int16_t rateLimit = 500; // Adjust this value to control the rate of change
+
+
+
 // Enum for button states
 enum ButtonState {
   BUTTON_HIGH,
@@ -42,6 +49,9 @@ int lcdScreenCase = 0;
 int lcdScreenCaseBeforeAlarm = 0;
 bool lcdAlarmState = false;
 bool lcdAlarmStateOverride = false;
+
+bool translationButtonPressed = false;
+
 
 airspeedMessage myAirspeed;
 deltaVMessage myDeltaV;
@@ -76,6 +86,7 @@ void sendCameraCommands();
 void sendTranslationCommands();
 void sendRotationCommands();
 void messageHandler(byte messageType, byte msg[], byte msgSize);
+
 
 // Setup function
 void setup() {
@@ -125,8 +136,15 @@ void loop() {
   
   // Send at each loop a message to control the throttle and the pitch/roll axis.
   sendRotationCommands();
-  sendTranslationCommands();
   sendThrottleCommands();
+
+  // Send either translation or camera commands based on the button state
+  if (translationButtonPressed) {
+    sendCameraCommands();
+  } else {
+    sendTranslationCommands();
+  }
+
 }
 
 // Function to connect to Kerbal Space Program
@@ -164,7 +182,10 @@ void handleJoystickButtons(unsigned long now) {
 
   // Handle the translation button (inverted logic for pull-up)
   if (readingJoystickButtonTranslation == LOW && (now - lastDebounceTimeJoystickTranslation) > DEBOUNCE_DELAY) {
-    
+    translationButtonPressed = true;
+    lastDebounceTimeJoystickTranslation = now;
+  } else if (readingJoystickButtonTranslation == HIGH && (now - lastDebounceTimeJoystickTranslation) > DEBOUNCE_DELAY) {
+    translationButtonPressed = false;
     lastDebounceTimeJoystickTranslation = now;
   }
 
@@ -330,38 +351,59 @@ void sendThrottleCommands() {
 }
 
 // Function to send camera commands
+// Function to send camera commands
 void sendCameraCommands() {
   cameraRotationMessage camMsg;
-  int readingPitch = analogRead(TRANSLATE_X_PIN);
-  int readingRoll = analogRead(TRANSLATE_Y_PIN);
-  int readingZoom = analogRead(TRANSLATE_Z_PIN);
+  
+  int readingPitch = analogRead(TRANSLATE_Z_PIN);
+  int readingYaw = analogRead(TRANSLATE_X_PIN);
+  int readingZoom = analogRead(TRANSLATE_Y_PIN);
 
   int16_t pitch = 0;
-  if (readingPitch > (512 + DEADZONE)) {
-    pitch = map(readingPitch, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (readingPitch < (512 - DEADZONE)) {
-    pitch = map(readingPitch, 0, 512 - DEADZONE, INT16_MIN, 0);
-  }
-
-  int16_t roll = 0;
-  if (readingRoll > (512 + DEADZONE)) {
-    roll = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MIN);
-  } else if (readingRoll < (512 - DEADZONE)) {
-    roll = map(readingRoll, 0, 512 - DEADZONE, INT16_MAX, 0);
-  }
-
+  int16_t yaw = 0;
   int16_t zoom = 0;
-  if (readingZoom > (512 + DEADZONE)) {
-    zoom = map(readingZoom, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (readingZoom < (512 - DEADZONE)) {
-    zoom = map(readingZoom, 0, 512 - DEADZONE, INT16_MIN, 0);
+
+  // Scale the readings
+  int16_t scaledPitch = map(readingPitch, 0, 1023, -32768, 32767);
+  int16_t scaledYaw = map(readingYaw, 0, 1023, -32768, 32767);
+  int16_t scaledZoom = map(readingZoom, 0, 1023, -32768, 32767);
+
+  // Implement dead zone handling
+  if (scaledPitch > -100 && scaledPitch < 100) {
+    pitch = 0;
+  } else {
+    pitch = scaledPitch;
   }
+
+  if (scaledYaw > -100 && scaledYaw < 100) {
+    yaw = 0;
+  } else {
+    yaw = scaledYaw;
+  }
+
+  if (scaledZoom > -100 && scaledZoom < 100) {
+    zoom = 0;
+  } else {
+    zoom = scaledZoom;
+  }
+
+  // Apply rate limiter
+  pitch = constrain(pitch, prevPitch - rateLimit, prevPitch + rateLimit);
+  yaw = constrain(yaw, prevYaw - rateLimit, prevYaw + rateLimit);
+  zoom = constrain(zoom, prevZoom - rateLimit, prevZoom + rateLimit);
+
+  // Update previous values
+  prevPitch = pitch;
+  prevYaw = yaw;
+  prevZoom = zoom;
 
   camMsg.setPitch(pitch);
-  camMsg.setRoll(roll);
+  camMsg.setYaw(yaw);
   camMsg.setZoom(zoom);
   mySimpit.send(CAMERA_ROTATION_MESSAGE, camMsg);
 }
+
+
 
 // Function to send translation commands
 void sendTranslationCommands() {
