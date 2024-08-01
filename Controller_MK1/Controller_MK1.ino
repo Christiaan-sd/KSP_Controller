@@ -2,22 +2,55 @@
 #include <LiquidCrystal.h>
 #include <Wire.h>
 #include <SerLCD.h>
+#include <PayloadStructs.h>
 
-// Declare a KerbalSimpit object that will
-// communicate using the "Serial" device.
+// Constants
+const int THROTTLE_PIN = A0;       // the pin used for controlling throttle
+const int PITCH_PIN = A1;          // the pin used for controlling pitch
+const int ROLL_PIN = A2;           // the pin used for controlling roll
+const int YAW_PIN = A3;            // the pin used for controlling yaw
+const int TRANSLATE_X_PIN = A5;    // the pin used for controlling translation X
+const int TRANSLATE_Y_PIN = A6;    // the pin used for controlling translation Y
+const int TRANSLATE_Z_PIN = A4;    // the pin used for controlling translation Z
+const int JOYSTICK_BUTTON_TRANSLATION = 4;
+const int JOYSTICK_BUTTON_ROTATION = 5;
+const int LCD_SWITCH_PIN_LEFT = 2;
+const int LCD_SWITCH_PIN_RIGHT = 3;
+const unsigned long DEBOUNCE_DELAY = 50; // Debounce delay in milliseconds
+const unsigned int LCD_UPDATE_INTERVAL = 125;  // LCD update frequency
+const unsigned int SEND_INTERVAL = 1500;
+const int DEADZONE = 20; // Deadzone for joystick inputs
+    
+// Enum for button states
+enum ButtonState {
+  BUTTON_HIGH,
+  BUTTON_LOW
+};
+
+// Global Variables
 KerbalSimpit mySimpit(Serial);
+SerLCD lcd;
+bool isConnected = false;
 
-// Set the pin numbers:
-const int THROTTLE_PIN = A0; // the pin used for controlling throttle
-const int PITCH_PIN = A1;    // the pin used for controlling pitch
-const int ROLL_PIN = A2;     // the pin used for controlling roll
-const int YAW_PIN = A3;      // the pin used for controlling YAW
+unsigned long lastLCDUpdate = 0;
+unsigned long lastDebounceTimeRight = 0;
+unsigned long lastDebounceTimeLeft = 0;
+unsigned long lastDebounceTimeJoystickTranslation = 0;
+unsigned long lastDebounceTimeJoystickRotation = 0;
 
-// Translation joystick pins
-const int TRANSLATE_X_PIN = A5; // the pin used for controlling translation X
-const int TRANSLATE_Y_PIN = A6; // the pin used for controlling translation Y
-const int TRANSLATE_Z_PIN = A4; // the pin used for controlling translation Z
+int lcdScreenCase = 0;
+int lcdScreenCaseBeforeAlarm = 0;
+bool lcdAlarmState = false;
+bool lcdAlarmStateOverride = false;
 
+airspeedMessage myAirspeed;
+deltaVMessage myDeltaV;
+altitudeMessage myAltitude;
+velocityMessage myVelocity;
+vesselPointingMessage myRotation;
+tempLimitMessage myTemplimits;
+atmoConditionsMessage myAtmoConditions;
+resourceMessage myElectric;
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -31,62 +64,35 @@ byte deltaChar[8] = {
   0b00000
 };
 
-SerLCD lcd; // Initialize the library with default I2C address 0x72
-const int Joystick_button_Translation = 0;
-const int Joystick_button_Rotation = 1;
-const int LCD_switchpinleft = 2;
-const int LCD_switchpinright = 3;
+// Function Prototypes
+void connectToKSP();
+void handleButtons(unsigned long now);
+void handleJoystickButtons(unsigned long now);
+void handleLCDButtons(unsigned long now);
+void handleTempAlarm();
+void updateLCD();
+void sendThrottleCommands();
+void sendCameraCommands();
+void sendTranslationCommands();
+void sendRotationCommands();
+void messageHandler(byte messageType, byte msg[], byte msgSize);
 
-int LCD_SwitchButtonStateRight;
-int LCD_SwitchButtonStateLeft;
-int LCD_Last_Switch_Button_State_Right = HIGH;
-int LCD_Last_Switch_Button_State_Left = HIGH;
-int JoystickButtonStateTranslation = HIGH; // initial state for pull-up
-int JoystickButtonStateRotation = HIGH;    // initial state for pull-up
-int LCD_Screen_Case = 0;
-int LCD_Screen_Case_Before_Alarm = 0;
-bool LCD_alarm_state = false;
-bool LCD_alarm_state_overide = false;
-
-
-
-bool state = false;
-unsigned long lastSent = 0;
-const unsigned int sendInterval = 1500;
-
-airspeedMessage myAirspeed;
-deltaVMessage myDeltaV;
-altitudeMessage myAltitude; // Added declaration for altitudeMessage
-velocityMessage myVelocity; // Added declaration for velocityMessage
-vesselPointingMessage myRotation;
-tempLimitMessage myTemplimits;
-atmoConditionsMessage myAtmoConditions;
-resourceMessage myElectric;
-
-unsigned long lastLCDUpdate = 0;
-const unsigned int LCDUpdateInterval = 125;  // Adjust this value to change the LCD update frequency
-
-unsigned long lastDebounceTimeRight = 0;
-unsigned long lastDebounceTimeLeft = 0;
-const unsigned long debounceDelay = 50; // Debounce delay in milliseconds
-
-bool isConnected = false;
-
+// Setup function
 void setup() {
-  Serial.begin(115200);  // Initialize serial communication at 115200 baud
+  Serial.begin(115200); // Initialize serial communication at 115200 baud
   Wire.begin();
   
   // Initialize LCD
   lcd.begin(Wire);
   lcd.setFastBacklight(255, 255, 255);
   lcd.createChar(0, deltaChar); // Create the custom character
-  Wire.setClock(400000); //Optional - set I2C SCL to High Speed Mode of 400kHz
+  Wire.setClock(400000); // Optional - set I2C SCL to High Speed Mode of 400kHz
   
   // Set pin modes
-  pinMode(LCD_switchpinright, INPUT_PULLUP);
-  pinMode(LCD_switchpinleft, INPUT_PULLUP);
-  pinMode(Joystick_button_Translation, INPUT_PULLUP);
-  pinMode(Joystick_button_Rotation, INPUT_PULLUP);
+  pinMode(LCD_SWITCH_PIN_RIGHT, INPUT_PULLUP);
+  pinMode(LCD_SWITCH_PIN_LEFT, INPUT_PULLUP);
+  pinMode(JOYSTICK_BUTTON_TRANSLATION, INPUT_PULLUP);
+  pinMode(JOYSTICK_BUTTON_ROTATION, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
   
   digitalWrite(LED_BUILTIN, HIGH);
@@ -99,6 +105,7 @@ void setup() {
   connectToKSP();
 }
 
+// Main loop function
 void loop() {
   unsigned long now = millis();
   
@@ -106,9 +113,9 @@ void loop() {
   handleTempAlarm();
   mySimpit.update();
 
-  if (now - lastLCDUpdate >= LCDUpdateInterval) {
+  if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
-    lastLCDUpdate = now;  // Update the last LCD update time
+    lastLCDUpdate = now; // Update the last LCD update time
   }
   
   // Reconnect if disconnected
@@ -122,7 +129,7 @@ void loop() {
   sendThrottleCommands();
 }
 
-
+// Function to connect to Kerbal Space Program
 void connectToKSP() {
   while (!mySimpit.init()) {
     delay(250);
@@ -144,99 +151,94 @@ void connectToKSP() {
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
 }
 
+// Function to handle all buttons
 void handleButtons(unsigned long now) {
-  // Handle LCD screen buttons
-  handleLCDButtons();
-
-  // Handle joystick buttons
-  handleJoystickButtons();
-
-  // Future button handling can be added here
+  handleLCDButtons(now);
+  handleJoystickButtons(now);
 }
 
-
-void handleJoystickButtons() {
-  int reading_Joystick_button_Translation = digitalRead(Joystick_button_Translation);
-  int reading_Joystick_button_Rotation = digitalRead(Joystick_button_Rotation);
+// Function to handle joystick buttons with debouncing
+void handleJoystickButtons(unsigned long now) {
+  int readingJoystickButtonTranslation = digitalRead(JOYSTICK_BUTTON_TRANSLATION);
+  int readingJoystickButtonRotation = digitalRead(JOYSTICK_BUTTON_ROTATION);
 
   // Handle the translation button (inverted logic for pull-up)
-  if (reading_Joystick_button_Translation == LOW) {
+  if (readingJoystickButtonTranslation == LOW && (now - lastDebounceTimeJoystickTranslation) > DEBOUNCE_DELAY) {
     
-    mySimpit.activateAction(STAGE_ACTION);
+    lastDebounceTimeJoystickTranslation = now;
   }
-
 
   // Handle the rotation button (inverted logic for pull-up)
-  if (reading_Joystick_button_Rotation == LOW) {
-
-   mySimpit.activateAction(STAGE_ACTION);
+  if (readingJoystickButtonRotation == LOW && (now - lastDebounceTimeJoystickRotation) > DEBOUNCE_DELAY) {
+    mySimpit.activateAction(STAGE_ACTION);
+    lastDebounceTimeJoystickRotation = now;
   }
-  
-
 }
 
-
-void handleLCDButtons() {
-  int reading_LCD_switchpinright = digitalRead(LCD_switchpinright);
-  int reading_LCD_switchpinleft = digitalRead(LCD_switchpinleft);
+// Function to handle LCD buttons with debouncing
+void handleLCDButtons(unsigned long now) {
+  int readingLCDSwitchPinRight = digitalRead(LCD_SWITCH_PIN_RIGHT);
+  int readingLCDSwitchPinLeft = digitalRead(LCD_SWITCH_PIN_LEFT);
 
   // Handle the right button
-  if (reading_LCD_switchpinright == LOW && LCD_SwitchButtonStateRight == HIGH) {
-    if (LCD_Screen_Case < 8) {
-      LCD_Screen_Case++;
-      LCD_Screen_Case_Before_Alarm = LCD_Screen_Case;
+  if (readingLCDSwitchPinRight == LOW && (now - lastDebounceTimeRight) > DEBOUNCE_DELAY) {
+    if (lcdScreenCase < 8) {
+      lcdScreenCase++;
+      lcdScreenCaseBeforeAlarm = lcdScreenCase;
       lcd.clear(); // clear screen for new display info
-      if (LCD_alarm_state) {
-        LCD_alarm_state_overide = false;
-        LCD_alarm_state = false;
-        LCD_Screen_Case = 0;
+      if (lcdAlarmState) {
+        lcdAlarmStateOverride = false;
+        lcdAlarmState = false;
+        lcdScreenCase = 0;
         lcd.clear();
         lcd.setBacklight(255, 255, 255);
       }
     }
+    lastDebounceTimeRight = now;
   }
-  LCD_SwitchButtonStateRight = reading_LCD_switchpinright;
 
   // Handle the left button
-  if (reading_LCD_switchpinleft == LOW && LCD_SwitchButtonStateLeft == HIGH) {
-    if (LCD_Screen_Case > 0) {
-      LCD_Screen_Case--;
-      LCD_Screen_Case_Before_Alarm = LCD_Screen_Case;
+  if (readingLCDSwitchPinLeft == LOW && (now - lastDebounceTimeLeft) > DEBOUNCE_DELAY) {
+    if (lcdScreenCase > 0) {
+      lcdScreenCase--;
+      lcdScreenCaseBeforeAlarm = lcdScreenCase;
       lcd.clear(); // clear screen for new display info
-      if (LCD_alarm_state) {
-        LCD_alarm_state_overide = true;
-        LCD_alarm_state = false;
-        LCD_Screen_Case = 0;
+      if (lcdAlarmState) {
+        lcdAlarmStateOverride = true;
+        lcdAlarmState = false;
+        lcdScreenCase = 0;
         lcd.clear();
         lcd.setBacklight(255, 255, 255);
       }
     }
+    lastDebounceTimeLeft = now;
   }
-  LCD_SwitchButtonStateLeft = reading_LCD_switchpinleft;
 }
 
+// Function to handle temperature alarms
 void handleTempAlarm() {
   if (myTemplimits.skinTempLimitPercentage > 40 || myTemplimits.tempLimitPercentage > 40) {
-    if (!LCD_alarm_state && !LCD_alarm_state_overide) {
-      LCD_Screen_Case_Before_Alarm = LCD_Screen_Case; // Save the current state before alarm
-      LCD_Screen_Case = 98;
-      LCD_alarm_state = true;
+    if (!lcdAlarmState && !lcdAlarmStateOverride) {
+      lcdScreenCaseBeforeAlarm = lcdScreenCase; // Save the current state before alarm
+      lcdScreenCase = 98;
+      lcdAlarmState = true;
       lcd.setBacklight(255, 0, 0);
       lcd.clear();
     }
   } else {
-    if (LCD_alarm_state) {
-      LCD_alarm_state = false;
-      LCD_alarm_state_overide = false; 
-      LCD_Screen_Case = LCD_Screen_Case_Before_Alarm;
+    if (lcdAlarmState) {
+      lcdAlarmState = false;
+      lcdAlarmStateOverride = false;
+      lcdScreenCase = lcdScreenCaseBeforeAlarm;
       lcd.setBacklight(255, 255, 255);
       lcd.clear();
     }
   }
 }
 
+// Function to update LCD display
 void updateLCD() {
-  switch (LCD_Screen_Case) {
+  switch (lcdScreenCase) {
     case 0:
       lcd.setCursor(0, 0);
       lcd.print("MACH: ");
@@ -319,155 +321,117 @@ void updateLCD() {
   }
 }
 
-void sendThrottleCommands(){
-  // Send at each loop a message to control the throttle and the pitch/roll axis.
-  
-  throttleMessage throttle_msg;
-  // Read the value of the potentiometer
+// Function to send throttle commands
+void sendThrottleCommands() {
+  throttleMessage throttleMsg;
   int reading = analogRead(THROTTLE_PIN);
-  // Convert it in KerbalSimpit Range
-  throttle_msg.throttle = map(reading, 0, 1023, INT16_MAX, 0);
-
-  // Send the message
-  mySimpit.send(THROTTLE_MESSAGE, throttle_msg);
-  
+  throttleMsg.throttle = map(reading, 0, 1023, INT16_MAX, 0);
+  mySimpit.send(THROTTLE_MESSAGE, throttleMsg);
 }
 
-#include <PayloadStructs.h>
-
+// Function to send camera commands
 void sendCameraCommands() {
-  cameraRotationMessage cam_msg;
+  cameraRotationMessage camMsg;
+  int readingPitch = analogRead(TRANSLATE_X_PIN);
+  int readingRoll = analogRead(TRANSLATE_Y_PIN);
+  int readingZoom = analogRead(TRANSLATE_Z_PIN);
 
-  // Read the values of the potentiometers
-  int reading_Pitch = analogRead(TRANSLATE_X_PIN);
-  int reading_Roll = analogRead(TRANSLATE_Y_PIN);
-  int reading_Zoom = analogRead(TRANSLATE_Z_PIN);
-
-  // Deadzone size
-  const int DEADZONE = 20; // Adjust this value as needed
-
-  // Calculate deadzone for Pitch control
   int16_t pitch = 0;
-  if (reading_Pitch > (512 + DEADZONE)) {
-    pitch = map(reading_Pitch, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (reading_Pitch < (512 - DEADZONE)) {
-    pitch = map(reading_Pitch, 0, 512 - DEADZONE, INT16_MIN, 0);
+  if (readingPitch > (512 + DEADZONE)) {
+    pitch = map(readingPitch, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (readingPitch < (512 - DEADZONE)) {
+    pitch = map(readingPitch, 0, 512 - DEADZONE, INT16_MIN, 0);
   }
 
-  // Calculate deadzone for Roll control (inverted)
   int16_t roll = 0;
-  if (reading_Roll > (512 + DEADZONE)) {
-    roll = map(reading_Roll, 512 + DEADZONE, 1023, 0, INT16_MIN);
-  } else if (reading_Roll < (512 - DEADZONE)) {
-    roll = map(reading_Roll, 0, 512 - DEADZONE, INT16_MAX, 0);
+  if (readingRoll > (512 + DEADZONE)) {
+    roll = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MIN);
+  } else if (readingRoll < (512 - DEADZONE)) {
+    roll = map(readingRoll, 0, 512 - DEADZONE, INT16_MAX, 0);
   }
 
-  // Calculate deadzone for Zoom control
   int16_t zoom = 0;
-  if (reading_Zoom > (512 + DEADZONE)) {
-    zoom = map(reading_Zoom, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (reading_Zoom < (512 - DEADZONE)) {
-    zoom = map(reading_Zoom, 0, 512 - DEADZONE, INT16_MIN, 0);
+  if (readingZoom > (512 + DEADZONE)) {
+    zoom = map(readingZoom, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (readingZoom < (512 - DEADZONE)) {
+    zoom = map(readingZoom, 0, 512 - DEADZONE, INT16_MIN, 0);
   }
 
-  // Set the values in the message
-  cam_msg.setPitch(pitch);
-  cam_msg.setRoll(roll);
-  cam_msg.setZoom(zoom);
-
-  // Send the message
-  mySimpit.send(CAMERA_ROTATION_MESSAGE, cam_msg);
+  camMsg.setPitch(pitch);
+  camMsg.setRoll(roll);
+  camMsg.setZoom(zoom);
+  mySimpit.send(CAMERA_ROTATION_MESSAGE, camMsg);
 }
 
-
+// Function to send translation commands
 void sendTranslationCommands() {
-  translationMessage trans_msg;
+  translationMessage transMsg;
+  int readingX = analogRead(TRANSLATE_X_PIN);
+  int readingY = analogRead(TRANSLATE_Y_PIN);
+  int readingZ = analogRead(TRANSLATE_Z_PIN);
 
-  // Read the values of the potentiometers
-  int reading_X = analogRead(TRANSLATE_X_PIN);
-  int reading_Y = analogRead(TRANSLATE_Y_PIN);
-  int reading_Z = analogRead(TRANSLATE_Z_PIN);
-
-  // Deadzone size
-  const int DEADZONE = 20; // Adjust this value as needed
-
-  // Calculate deadzone for X translation
   int16_t translateX = 0;
-  if (reading_X > (512 + DEADZONE)) {
-    translateX = map(reading_X, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (reading_X < (512 - DEADZONE)) {
-    translateX = map(reading_X, 0, 512 - DEADZONE, INT16_MIN, 0);
+  if (readingX > (512 + DEADZONE)) {
+    translateX = map(readingX, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (readingX < (512 - DEADZONE)) {
+    translateX = map(readingX, 0, 512 - DEADZONE, INT16_MIN, 0);
   }
 
-  // Calculate deadzone for Y translation
   int16_t translateY = 0;
-  if (reading_Y > (512 + DEADZONE)) {
-    translateY = map(reading_Y, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (reading_Y < (512 - DEADZONE)) {
-    translateY = map(reading_Y, 0, 512 - DEADZONE, INT16_MIN, 0);
+  if (readingY > (512 + DEADZONE)) {
+    translateY = map(readingY, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (readingY < (512 - DEADZONE)) {
+    translateY = map(readingY, 0, 512 - DEADZONE, INT16_MIN, 0);
   }
 
-  // Calculate deadzone for Z translation (inverted)
   int16_t translateZ = 0;
-  if (reading_Z > (512 + DEADZONE)) {
-    translateZ = map(reading_Z, 512 + DEADZONE, 1023, 0, INT16_MIN);
-  } else if (reading_Z < (512 - DEADZONE)) {
-    translateZ = map(reading_Z, 0, 512 - DEADZONE, INT16_MAX, 0);
+  if (readingZ > (512 + DEADZONE)) {
+    translateZ = map(readingZ, 512 + DEADZONE, 1023, 0, INT16_MIN);
+  } else if (readingZ < (512 - DEADZONE)) {
+    translateZ = map(readingZ, 0, 512 - DEADZONE, INT16_MAX, 0);
   }
 
-  // Put those values in the message
-  trans_msg.setX(translateX);
-  trans_msg.setY(translateY);
-  trans_msg.setZ(translateZ);
-
-  // Send the message
-  mySimpit.send(TRANSLATION_MESSAGE, trans_msg);
+  transMsg.setX(translateX);
+  transMsg.setY(translateY);
+  transMsg.setZ(translateZ);
+  mySimpit.send(TRANSLATION_MESSAGE, transMsg);
 }
 
-
+// Function to send rotation commands
 void sendRotationCommands() {
-  rotationMessage rot_msg;
-  // Read the values of the potentiometers
-  int reading_pitch = analogRead(PITCH_PIN);
-  int reading_roll = analogRead(ROLL_PIN);
-  int reading_yaw = analogRead(YAW_PIN);
+  rotationMessage rotMsg;
+  int readingPitch = analogRead(PITCH_PIN);
+  int readingRoll = analogRead(ROLL_PIN);
+  int readingYaw = analogRead(YAW_PIN);
 
-  // Deadzone size
-  const int DEADZONE = 20; // Adjust this value as needed
-
-  // Calculate deadzone for pitch
   int16_t pitch = 0;
-  if (reading_pitch > (512 + DEADZONE)) {
-    pitch = map(reading_pitch, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (reading_pitch < (512 - DEADZONE)) {
-    pitch = map(reading_pitch, 0, 512 - DEADZONE, INT16_MIN, 0);
+  if (readingPitch > (512 + DEADZONE)) {
+    pitch = map(readingPitch, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (readingPitch < (512 - DEADZONE)) {
+    pitch = map(readingPitch, 0, 512 - DEADZONE, INT16_MIN, 0);
   }
 
-  // Calculate deadzone for roll
   int16_t roll = 0;
-  if (reading_roll > (512 + DEADZONE)) {
-    roll = map(reading_roll, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (reading_roll < (512 - DEADZONE)) {
-    roll = map(reading_roll, 0, 512 - DEADZONE, INT16_MIN, 0);
+  if (readingRoll > (512 + DEADZONE)) {
+    roll = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (readingRoll < (512 - DEADZONE)) {
+    roll = map(readingRoll, 0, 512 - DEADZONE, INT16_MIN, 0);
   }
 
-  // Calculate deadzone for yaw
   int16_t yaw = 0;
-  if (reading_yaw > (512 + DEADZONE)) {
-    yaw = map(reading_yaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (reading_yaw < (512 - DEADZONE)) {
-    yaw = map(reading_yaw, 0, 512 - DEADZONE, INT16_MIN, 0);
+  if (readingYaw > (512 + DEADZONE)) {
+    yaw = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
+  } else if (readingYaw < (512 - DEADZONE)) {
+    yaw = map(readingYaw, 0, 512 - DEADZONE, INT16_MIN, 0);
   }
 
-  // Put those values in the message
-  rot_msg.setPitch(pitch);
-  rot_msg.setRoll(roll);
-  rot_msg.setYaw(yaw);
-  // Send the message
-  mySimpit.send(ROTATION_MESSAGE, rot_msg);
+  rotMsg.setPitch(pitch);
+  rotMsg.setRoll(roll);
+  rotMsg.setYaw(yaw);
+  mySimpit.send(ROTATION_MESSAGE, rotMsg);
 }
 
-
+// Message handler for Kerbal Simpit
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
   switch (messageType) {
     case ATMO_CONDITIONS_MESSAGE:
