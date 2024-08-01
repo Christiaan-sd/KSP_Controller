@@ -20,14 +20,8 @@ const unsigned long DEBOUNCE_DELAY = 50; // Debounce delay in milliseconds
 const unsigned int LCD_UPDATE_INTERVAL = 125;  // LCD update frequency
 const unsigned int SEND_INTERVAL = 1500;
 const int DEADZONE = 20; // Deadzone for joystick inputs
-const int SMALL_INCREMENT = 1000; // Adjust this camera responsivenes value as needed
-int16_t prevPitch = 0;
-int16_t prevYaw = 0;
-int16_t prevZoom = 0;
-const int16_t rateLimit = 500; // Adjust this value to control the rate of change
-
-
-
+const int SMALL_INCREMENT = 300; // Adjust this camera responsivenes value as needed
+    
 // Enum for button states
 enum ButtonState {
   BUTTON_HIGH,
@@ -363,46 +357,32 @@ void sendCameraCommands() {
   int16_t yaw = 0;
   int16_t zoom = 0;
 
-  // Scale the readings
-  int16_t scaledPitch = map(readingPitch, 0, 1023, -32768, 32767);
-  int16_t scaledYaw = map(readingYaw, 0, 1023, -32768, 32767);
-  int16_t scaledZoom = map(readingZoom, 0, 1023, -32768, 32767);
-
-  // Implement dead zone handling
-  if (scaledPitch > -100 && scaledPitch < 100) {
-    pitch = 0;
-  } else {
-    pitch = scaledPitch;
+  // Adjust pitch
+  if (readingPitch > (512 + DEADZONE)) {
+    pitch = SMALL_INCREMENT; // Add a small increment
+  } else if (readingPitch < (512 - DEADZONE)) {
+    pitch = -SMALL_INCREMENT; // Subtract a small increment
   }
 
-  if (scaledYaw > -100 && scaledYaw < 100) {
-    yaw = 0;
-  } else {
-    yaw = scaledYaw;
+  // Adjust yaw
+  if (readingYaw > (512 + DEADZONE)) {
+    yaw = SMALL_INCREMENT; // Add a small increment
+  } else if (readingYaw < (512 - DEADZONE)) {
+    yaw = -SMALL_INCREMENT; // Subtract a small increment
   }
 
-  if (scaledZoom > -100 && scaledZoom < 100) {
-    zoom = 0;
-  } else {
-    zoom = scaledZoom;
+  // Adjust zoom
+  if (readingZoom > (512 + DEADZONE)) {
+    zoom = SMALL_INCREMENT; // Add a small increment
+  } else if (readingZoom < (512 - DEADZONE)) {
+    zoom = -SMALL_INCREMENT; // Subtract a small increment
   }
-
-  // Apply rate limiter
-  pitch = constrain(pitch, prevPitch - rateLimit, prevPitch + rateLimit);
-  yaw = constrain(yaw, prevYaw - rateLimit, prevYaw + rateLimit);
-  zoom = constrain(zoom, prevZoom - rateLimit, prevZoom + rateLimit);
-
-  // Update previous values
-  prevPitch = pitch;
-  prevYaw = yaw;
-  prevZoom = zoom;
 
   camMsg.setPitch(pitch);
   camMsg.setYaw(yaw);
   camMsg.setZoom(zoom);
   mySimpit.send(CAMERA_ROTATION_MESSAGE, camMsg);
 }
-
 
 
 // Function to send translation commands
