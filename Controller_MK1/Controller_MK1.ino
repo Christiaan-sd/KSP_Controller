@@ -12,6 +12,14 @@ const int YAW_PIN = A3;            // the pin used for controlling yaw
 const int TRANSLATE_X_PIN = A5;    // the pin used for controlling translation X
 const int TRANSLATE_Y_PIN = A6;    // the pin used for controlling translation Y
 const int TRANSLATE_Z_PIN = A4;    // the pin used for controlling translation Z
+const int BRAKE_SWITCH = 6;
+const int GEAR_SWITCH = 7;
+const int RCS_SWITCH = 8;
+const int SAS_SWITCH = 9;
+const int RADS_SWITCH = 10;
+const int SOLAR_SWITCH = 11;
+const int LIGHTS_SWITCH = 12;
+const int LIGHTS_SWITCH_LED = 13;
 const int JOYSTICK_BUTTON_TRANSLATION = 5;
 const int JOYSTICK_BUTTON_ROTATION = 4;
 const int LCD_SWITCH_PIN_LEFT = 2;
@@ -33,11 +41,22 @@ KerbalSimpit mySimpit(Serial);
 SerLCD lcd;
 bool isConnected = false;
 
+
 unsigned long lastLCDUpdate = 0;
+
+// Variables to store the last debounce time
 unsigned long lastDebounceTimeRight = 0;
 unsigned long lastDebounceTimeLeft = 0;
 unsigned long lastDebounceTimeJoystickTranslation = 0;
 unsigned long lastDebounceTimeJoystickRotation = 0;
+unsigned long lastDebounceTimeBrakesSwitch = 0;
+unsigned long lastDebounceTimeGearSwitch = 0;
+unsigned long lastDebounceTimeRCSSwitch = 0;
+unsigned long lastDebounceTimeSASSwitch = 0;
+unsigned long lastDebounceTimeRadsSwitch = 0;
+unsigned long lastDebounceTimeSolarSwitch = 0;
+unsigned long lastDebounceTimeLightsSwitch = 0;
+
 
 int lcdScreenCase = 0;
 int lcdScreenCaseBeforeAlarm = 0;
@@ -46,6 +65,7 @@ bool lcdAlarmStateOverride = false;
 
 bool translationButtonPressed = false;
 
+// Global variable declarations
 
 airspeedMessage myAirspeed;
 deltaVMessage myDeltaV;
@@ -70,8 +90,8 @@ byte deltaChar[8] = {
 
 // Function Prototypes
 void connectToKSP();
-void handleButtons(unsigned long now);
 void handleJoystickButtons(unsigned long now);
+void handleSwitches(unsigned long now);
 void handleLCDButtons(unsigned long now);
 void handleTempAlarm();
 void updateLCD();
@@ -98,9 +118,14 @@ void setup() {
   pinMode(LCD_SWITCH_PIN_LEFT, INPUT_PULLUP);
   pinMode(JOYSTICK_BUTTON_TRANSLATION, INPUT_PULLUP);
   pinMode(JOYSTICK_BUTTON_ROTATION, INPUT_PULLUP);
-  pinMode(LED_BUILTIN, OUTPUT);
-  
-  digitalWrite(LED_BUILTIN, HIGH);
+  pinMode(BRAKE_SWITCH, INPUT_PULLUP);
+  pinMode(GEAR_SWITCH, INPUT_PULLUP);
+  pinMode(RCS_SWITCH, INPUT_PULLUP);
+  pinMode(SAS_SWITCH, INPUT_PULLUP);
+  pinMode(RADS_SWITCH, INPUT_PULLUP);
+  pinMode(SOLAR_SWITCH, INPUT_PULLUP);
+  pinMode(LIGHTS_SWITCH, INPUT_PULLUP);
+  pinMode(LIGHTS_SWITCH_LED, OUTPUT);
   
   lcd.clear();
   lcd.print("KSP CONTROLLER!");
@@ -113,8 +138,10 @@ void setup() {
 // Main loop function
 void loop() {
   unsigned long now = millis();
+  handleSwitches(now);
+  handleLCDButtons(now);
+  handleJoystickButtons(now);
   
-  handleButtons(now);
   handleTempAlarm();
   mySimpit.update();
 
@@ -147,7 +174,6 @@ void connectToKSP() {
     delay(250);
   }
   isConnected = true;
-  digitalWrite(LED_BUILTIN, LOW);
   mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
   lcd.clear();
   lcd.print("CONNECTED!");
@@ -161,13 +187,61 @@ void connectToKSP() {
   mySimpit.registerChannel(DELTAV_MESSAGE);
   mySimpit.registerChannel(ATMO_CONDITIONS_MESSAGE);
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
+  mySimpit.registerChannel(ACTIONSTATUS_MESSAGE);
+  mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
+  
 }
 
-// Function to handle all buttons
-void handleButtons(unsigned long now) {
-  handleLCDButtons(now);
-  handleJoystickButtons(now);
+
+
+void handleSwitches(unsigned long now) {
+  // Read switch states
+  int readingBrakeSwitch = digitalRead(BRAKE_SWITCH);
+  int readingGearSwitch = digitalRead(GEAR_SWITCH);
+  int readingRCSSwitch = digitalRead(RCS_SWITCH);
+  int readingSASSwitch = digitalRead(SAS_SWITCH);
+  int readingRADSswitch = digitalRead(RADS_SWITCH);
+  int readingSolarSwitch = digitalRead(SOLAR_SWITCH);
+  int readingLightsSwitch = digitalRead(LIGHTS_SWITCH);
+
+  // Handle Brake Switch
+  if (readingBrakeSwitch == LOW && (now - lastDebounceTimeBrakesSwitch) > DEBOUNCE_DELAY) {
+    mySimpit.activateAction(BRAKES_ACTION);
+    lastDebounceTimeBrakesSwitch = now;
+  }
+
+  // Handle Gear Switch
+  if (readingGearSwitch == LOW && (now - lastDebounceTimeGearSwitch) > DEBOUNCE_DELAY) {
+    mySimpit.activateAction(GEAR_ACTION);
+    lastDebounceTimeGearSwitch = now;
+  }
+
+  // Handle RCS Switch
+  if (readingRCSSwitch == LOW && (now - lastDebounceTimeRCSSwitch) > DEBOUNCE_DELAY) {
+    mySimpit.activateAction(RCS_ACTION);
+    lastDebounceTimeRCSSwitch = now;
+  }
+
+  // Handle SAS Switch
+  if (readingSASSwitch == LOW && (now - lastDebounceTimeSASSwitch) > DEBOUNCE_DELAY) {
+    mySimpit.activateAction(SAS_ACTION);
+    lastDebounceTimeSASSwitch = now;
+  }
+
+
+
+  // Handle the Lights Switch with LED
+  if (readingLightsSwitch == LOW && (now - lastDebounceTimeLightsSwitch) > DEBOUNCE_DELAY) {  // Switch is pressed
+    digitalWrite(LIGHTS_SWITCH_LED, HIGH);  // Turn on the LED
+    mySimpit.activateAction(LIGHT_ACTION);
+    lastDebounceTimeLightsSwitch = now;
+  } else {  // Switch is not pressed
+    digitalWrite(LIGHTS_SWITCH_LED, LOW);   // Turn off the LED
+    mySimpit.deactivateAction(LIGHT_ACTION);
+  }
 }
+
+
 
 // Function to handle joystick buttons with debouncing
 void handleJoystickButtons(unsigned long now) {
