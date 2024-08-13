@@ -49,14 +49,22 @@ unsigned long lastDebounceTimeRight = 0;
 unsigned long lastDebounceTimeLeft = 0;
 unsigned long lastDebounceTimeJoystickTranslation = 0;
 unsigned long lastDebounceTimeJoystickRotation = 0;
-unsigned long lastDebounceTimeBrakesSwitch = 0;
+unsigned long lastDebounceTimeBrakeSwitch = 0;
 unsigned long lastDebounceTimeGearSwitch = 0;
 unsigned long lastDebounceTimeRCSSwitch = 0;
 unsigned long lastDebounceTimeSASSwitch = 0;
-unsigned long lastDebounceTimeRadsSwitch = 0;
+unsigned long lastDebounceTimeRADSSwitch = 0;
 unsigned long lastDebounceTimeSolarSwitch = 0;
 unsigned long lastDebounceTimeLightsSwitch = 0;
 
+// Variables to store the current and previous readings
+int lastSASSwitchState = HIGH;  // Assume switch is not pressed initially
+int lastLightsSwitchState = HIGH;  // Assume switch is not pressed initially
+int lastGearSwitchState = HIGH;
+int lastBrakeSwitchState = HIGH;
+int lastRCSSwitchState = HIGH;
+int lastRADSSwitchState = HIGH;
+int lastSolarSwitchState = HIGH;
 
 int lcdScreenCase = 0;
 int lcdScreenCaseBeforeAlarm = 0;
@@ -126,6 +134,15 @@ void setup() {
   pinMode(SOLAR_SWITCH, INPUT_PULLUP);
   pinMode(LIGHTS_SWITCH, INPUT_PULLUP);
   pinMode(LIGHTS_SWITCH_LED, OUTPUT);
+
+    // Read initial state of switches
+  lastSASSwitchState = digitalRead(SAS_SWITCH);
+  lastLightsSwitchState = digitalRead(LIGHTS_SWITCH);
+  lastGearSwitchState = digitalRead(GEAR_SWITCH);
+  lastBrakeSwitchState = digitalRead(BRAKE_SWITCH);
+  lastRCSSwitchState = digitalRead(RCS_SWITCH);
+  lastRADSSwitchState = digitalRead(RADS_SWITCH);
+  lastSolarSwitchState = digitalRead(SOLAR_SWITCH);
   
   lcd.clear();
   lcd.print("KSP CONTROLLER!");
@@ -188,7 +205,7 @@ void connectToKSP() {
   mySimpit.registerChannel(ATMO_CONDITIONS_MESSAGE);
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
   mySimpit.registerChannel(ACTIONSTATUS_MESSAGE);
-  mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
+  //mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
   
 }
 
@@ -200,46 +217,135 @@ void handleSwitches(unsigned long now) {
   int readingGearSwitch = digitalRead(GEAR_SWITCH);
   int readingRCSSwitch = digitalRead(RCS_SWITCH);
   int readingSASSwitch = digitalRead(SAS_SWITCH);
-  int readingRADSswitch = digitalRead(RADS_SWITCH);
+  int readingRADSSwitch = digitalRead(RADS_SWITCH);
   int readingSolarSwitch = digitalRead(SOLAR_SWITCH);
   int readingLightsSwitch = digitalRead(LIGHTS_SWITCH);
 
-  // Handle Brake Switch
-  if (readingBrakeSwitch == LOW && (now - lastDebounceTimeBrakesSwitch) > DEBOUNCE_DELAY) {
-    mySimpit.activateAction(BRAKES_ACTION);
-    lastDebounceTimeBrakesSwitch = now;
+  // Handle SOLAR Switch
+  if (readingSolarSwitch != lastSolarSwitchState && (now - lastDebounceTimeSolarSwitch) > DEBOUNCE_DELAY) {
+    lastDebounceTimeSolarSwitch = now;
+
+    if (readingSolarSwitch == LOW) {  // Button pressed
+      mySimpit.deactivateCAG(9);
+      //mySimpit.toggleCAG(9);
+    } else {  // Button released
+     
+      //mySimpit.toggleCAG(9);
+      mySimpit.activateCAG(9);
+    }
+
+    // Update the last state
+    lastSolarSwitchState = readingSolarSwitch;
   }
 
-  // Handle Gear Switch
-  if (readingGearSwitch == LOW && (now - lastDebounceTimeGearSwitch) > DEBOUNCE_DELAY) {
-    mySimpit.activateAction(GEAR_ACTION);
-    lastDebounceTimeGearSwitch = now;
+
+
+  // Handle RADS Switch
+  if (readingRADSSwitch != lastRADSSwitchState && (now - lastDebounceTimeRADSSwitch) > DEBOUNCE_DELAY) {
+    lastDebounceTimeRADSSwitch = now;
+
+    if (readingRADSSwitch == LOW) {  // Button pressed
+      
+      mySimpit.deactivateCAG(10);
+      
+
+    } else {  // Button released
+     mySimpit.activateCAG(10);
+
+      
+    }
+
+    // Update the last state
+    lastRADSSwitchState = readingRADSSwitch;
   }
 
   // Handle RCS Switch
-  if (readingRCSSwitch == LOW && (now - lastDebounceTimeRCSSwitch) > DEBOUNCE_DELAY) {
-    mySimpit.activateAction(RCS_ACTION);
+  if (readingRCSSwitch != lastRCSSwitchState && (now - lastDebounceTimeRCSSwitch) > DEBOUNCE_DELAY) {
     lastDebounceTimeRCSSwitch = now;
+
+    if (readingRCSSwitch == LOW) {  // Button pressed
+      
+      mySimpit.deactivateAction(RCS_ACTION);
+
+    } else {  // Button released
+     
+      mySimpit.activateAction(RCS_ACTION);
+    }
+
+    // Update the last state
+    lastRCSSwitchState = readingRCSSwitch;
   }
 
-  // Handle SAS Switch
-  if (readingSASSwitch == LOW && (now - lastDebounceTimeSASSwitch) > DEBOUNCE_DELAY) {
-    mySimpit.activateAction(SAS_ACTION);
+  // Handle Brake Switch
+  if (readingBrakeSwitch != lastBrakeSwitchState && (now - lastDebounceTimeBrakeSwitch) > DEBOUNCE_DELAY) {
+    lastDebounceTimeBrakeSwitch = now;
+
+    if (readingBrakeSwitch == LOW) {  // Button pressed
+      
+      mySimpit.deactivateAction(BRAKES_ACTION);
+
+    } else {  // Button released
+     
+      mySimpit.activateAction(BRAKES_ACTION);
+    }
+
+    // Update the last state
+    lastBrakeSwitchState = readingBrakeSwitch;
+  }
+
+
+     // Handle Gear Switch
+  if (readingGearSwitch != lastGearSwitchState && (now - lastDebounceTimeGearSwitch) > DEBOUNCE_DELAY) {
+    lastDebounceTimeGearSwitch = now;
+
+    if (readingGearSwitch == LOW) {  // Button pressed
+      
+      mySimpit.deactivateAction(GEAR_ACTION);
+
+    } else {  // Button released
+     
+      mySimpit.activateAction(GEAR_ACTION);
+    }
+
+    // Update the last state
+    lastGearSwitchState = readingGearSwitch;
+  }
+
+   // Handle SAS Switch
+  if (readingSASSwitch != lastSASSwitchState && (now - lastDebounceTimeSASSwitch) > DEBOUNCE_DELAY) {
     lastDebounceTimeSASSwitch = now;
+
+    if (readingSASSwitch == LOW) {  // Button pressed
+      
+      mySimpit.deactivateAction(SAS_ACTION);
+
+    } else {  // Button released
+     
+      mySimpit.activateAction(SAS_ACTION);
+    }
+
+    // Update the last state
+    lastSASSwitchState = readingSASSwitch;
   }
-
-
 
   // Handle the Lights Switch with LED
-  if (readingLightsSwitch == LOW && (now - lastDebounceTimeLightsSwitch) > DEBOUNCE_DELAY) {  // Switch is pressed
-    digitalWrite(LIGHTS_SWITCH_LED, HIGH);  // Turn on the LED
-    mySimpit.activateAction(LIGHT_ACTION);
+  if (readingLightsSwitch != lastLightsSwitchState && (now - lastDebounceTimeLightsSwitch) > DEBOUNCE_DELAY) {
     lastDebounceTimeLightsSwitch = now;
-  } else {  // Switch is not pressed
-    digitalWrite(LIGHTS_SWITCH_LED, LOW);   // Turn off the LED
-    mySimpit.deactivateAction(LIGHT_ACTION);
+
+    if (readingLightsSwitch == LOW) {  // Button pressed
+      
+      mySimpit.deactivateAction(LIGHT_ACTION); 
+    } else {  // Button released
+      
+      mySimpit.activateAction(LIGHT_ACTION);
+    }
+
+    // Update the last state
+    lastLightsSwitchState = readingLightsSwitch;
   }
 }
+
+
 
 
 
