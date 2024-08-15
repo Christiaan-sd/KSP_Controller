@@ -28,14 +28,29 @@ const unsigned long DEBOUNCE_DELAY = 50; // Debounce delay in milliseconds
 const unsigned int LCD_UPDATE_INTERVAL = 125;  // LCD update frequency
 const unsigned int SEND_INTERVAL = 1500;
 const int DEADZONE = 20; // Deadzone for joystick inputs
+const int DEADZONE_CAMERA_COMMANDS = 50;  // Deadzone for joystick Camera inputs
 const int SMALL_INCREMENT = 300; // Adjust this camera responsivenes value as needed
+
+// Define key codes for Camera control in KSP
+const int LEFT_KEY = 0x25;   // Left arrow key
+const int RIGHT_KEY = 0x27;  // Right arrow key
+const int PITCH_UP_KEY = 0x26;   // Up arrow key (Zoom In)
+const int PITCH_DOWN_KEY = 0x28; // Down arrow key (Zoom Out)
+const int ZOOM_IN_KEY = 0x21;   // Page Up key (Zoom In)
+const int ZOOM_OUT_KEY = 0x22;  // Page Down key (Zoom Out)
+
+// Track whether keys are currently pressed
+bool left_pressed = false, right_pressed = false;
+bool zoom_in_pressed = false, zoom_out_pressed = false;
+bool pitch_up_pressed = false, pitch_down_pressed = false;
+
     
 // Enum for button states
 enum ButtonState {
   BUTTON_HIGH,
   BUTTON_LOW
 };
-  
+
 // Global Variables
 KerbalSimpit mySimpit(Serial);
 SerLCD lcd;
@@ -188,7 +203,7 @@ void loop() {
 // Function to connect to Kerbal Space Program
 void connectToKSP() {
   while (!mySimpit.init()) {
-    delay(250);
+    delay(100);
   }
   isConnected = true;
   mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
@@ -525,44 +540,79 @@ void sendThrottleCommands() {
 }
 
 // Function to send camera commands
-// Function to send camera commands
 void sendCameraCommands() {
-  cameraRotationMessage camMsg;
-  
-  int readingPitch = analogRead(TRANSLATE_Z_PIN);
+  // Read joystick inputs
   int readingYaw = analogRead(TRANSLATE_X_PIN);
+  int readingPitch = analogRead(TRANSLATE_Z_PIN);
   int readingZoom = analogRead(TRANSLATE_Y_PIN);
 
-  int16_t pitch = 0;
-  int16_t yaw = 0;
-  int16_t zoom = 0;
-
-  // Adjust pitch
-  if (readingPitch > (512 + DEADZONE)) {
-    pitch = SMALL_INCREMENT; // Add a small increment
-  } else if (readingPitch < (512 - DEADZONE)) {
-    pitch = -SMALL_INCREMENT; // Subtract a small increment
+  // Handle yaw (Left)
+  if (readingYaw > (512 + DEADZONE_CAMERA_COMMANDS) && !left_pressed) {
+    keyboardEmulatorMessage yawMsg(LEFT_KEY, KEY_DOWN_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, yawMsg);
+    left_pressed = true;
+  } else if (readingYaw <= (512 + DEADZONE_CAMERA_COMMANDS) && left_pressed) {
+    keyboardEmulatorMessage yawMsg(LEFT_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, yawMsg);
+    left_pressed = false;
   }
 
-  // Adjust yaw
-  if (readingYaw > (512 + DEADZONE)) {
-    yaw = SMALL_INCREMENT; // Add a small increment
-  } else if (readingYaw < (512 - DEADZONE)) {
-    yaw = -SMALL_INCREMENT; // Subtract a small increment
+  // Handle yaw (Right)
+  if (readingYaw < (512 - DEADZONE_CAMERA_COMMANDS) && !right_pressed) {
+    keyboardEmulatorMessage yawMsg(RIGHT_KEY, KEY_DOWN_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, yawMsg);
+    right_pressed = true;
+  } else if (readingYaw >= (512 - DEADZONE_CAMERA_COMMANDS) && right_pressed) {
+    keyboardEmulatorMessage yawMsg(RIGHT_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, yawMsg);
+    right_pressed = false;
   }
 
-  // Adjust zoom
-  if (readingZoom > (512 + DEADZONE)) {
-    zoom = SMALL_INCREMENT; // Add a small increment
-  } else if (readingZoom < (512 - DEADZONE)) {
-    zoom = -SMALL_INCREMENT; // Subtract a small increment
+  // Handle pitch (Up)
+  if (readingPitch > (512 + DEADZONE_CAMERA_COMMANDS) && !pitch_up_pressed) {
+    keyboardEmulatorMessage pitchMsg(PITCH_UP_KEY, KEY_DOWN_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, pitchMsg);
+    pitch_up_pressed = true;
+  } else if (readingPitch <= (512 + DEADZONE_CAMERA_COMMANDS) && pitch_up_pressed) {
+    keyboardEmulatorMessage pitchMsg(PITCH_UP_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, pitchMsg);
+    pitch_up_pressed = false;
   }
 
-  camMsg.setPitch(pitch);
-  camMsg.setYaw(yaw);
-  camMsg.setZoom(zoom);
-  mySimpit.send(CAMERA_ROTATION_MESSAGE, camMsg);
+  // Handle pitch (Down)
+  if (readingPitch < (512 - DEADZONE_CAMERA_COMMANDS) && !pitch_down_pressed) {
+    keyboardEmulatorMessage pitchMsg(PITCH_DOWN_KEY, KEY_DOWN_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, pitchMsg);
+    pitch_down_pressed = true;
+  } else if (readingPitch >= (512 - DEADZONE_CAMERA_COMMANDS) && pitch_down_pressed) {
+    keyboardEmulatorMessage pitchMsg(PITCH_DOWN_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, pitchMsg);
+    pitch_down_pressed = false;
+  }
+
+  // Handle zoom (In)
+  if (readingZoom > (512 + DEADZONE_CAMERA_COMMANDS) && !zoom_in_pressed) {
+    keyboardEmulatorMessage zoomMsg(ZOOM_IN_KEY, KEY_DOWN_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, zoomMsg);
+    zoom_in_pressed = true;
+  } else if (readingZoom <= (512 + DEADZONE_CAMERA_COMMANDS) && zoom_in_pressed) {
+    keyboardEmulatorMessage zoomMsg(ZOOM_IN_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, zoomMsg);
+    zoom_in_pressed = false;
+  }
+
+  // Handle zoom (Out)
+  if (readingZoom < (512 - DEADZONE_CAMERA_COMMANDS) && !zoom_out_pressed) {
+    keyboardEmulatorMessage zoomMsg(ZOOM_OUT_KEY, KEY_DOWN_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, zoomMsg);
+    zoom_out_pressed = true;
+  } else if (readingZoom >= (512 - DEADZONE_CAMERA_COMMANDS) && zoom_out_pressed) {
+    keyboardEmulatorMessage zoomMsg(ZOOM_OUT_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, zoomMsg);
+    zoom_out_pressed = false;
+  }
 }
+
 
 
 // Function to send translation commands
