@@ -35,7 +35,7 @@ enum ButtonState {
   BUTTON_HIGH,
   BUTTON_LOW
 };
-
+  
 // Global Variables
 KerbalSimpit mySimpit(Serial);
 SerLCD lcd;
