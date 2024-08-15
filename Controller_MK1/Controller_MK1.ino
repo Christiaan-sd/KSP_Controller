@@ -203,7 +203,7 @@ void loop() {
 // Function to connect to Kerbal Space Program
 void connectToKSP() {
   while (!mySimpit.init()) {
-    delay(100);
+    delay(250);
   }
   isConnected = true;
   mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
@@ -369,14 +369,18 @@ void handleJoystickButtons(unsigned long now) {
   int readingJoystickButtonTranslation = digitalRead(JOYSTICK_BUTTON_TRANSLATION);
   int readingJoystickButtonRotation = digitalRead(JOYSTICK_BUTTON_ROTATION);
 
-  // Handle the translation button (inverted logic for pull-up)
-  if (readingJoystickButtonTranslation == LOW && (now - lastDebounceTimeJoystickTranslation) > DEBOUNCE_DELAY) {
-    translationButtonPressed = true;
+// Handle the translation button (inverted logic for pull-up)
+if (readingJoystickButtonTranslation == LOW && (now - lastDebounceTimeJoystickTranslation) > DEBOUNCE_DELAY) {
+    // Toggle the translationButtonPressed state
+    translationButtonPressed = !translationButtonPressed;
+     if (translationButtonPressed == true) {
+        mySimpit.printToKSP(F("Camera mode"), PRINT_TO_SCREEN);
+    } else {
+        mySimpit.printToKSP(F("translation mode"), PRINT_TO_SCREEN);
+    }
     lastDebounceTimeJoystickTranslation = now;
-  } else if (readingJoystickButtonTranslation == HIGH && (now - lastDebounceTimeJoystickTranslation) > DEBOUNCE_DELAY) {
-    translationButtonPressed = false;
-    lastDebounceTimeJoystickTranslation = now;
-  }
+}
+
 
   // Handle the rotation button (inverted logic for pull-up)
   if (readingJoystickButtonRotation == LOW && (now - lastDebounceTimeJoystickRotation) > DEBOUNCE_DELAY) {
