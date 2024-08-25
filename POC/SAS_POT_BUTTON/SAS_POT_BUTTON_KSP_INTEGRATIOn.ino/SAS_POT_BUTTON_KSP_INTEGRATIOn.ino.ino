@@ -1,12 +1,3 @@
-/*
-  KSP SAS Control with Button, Potentiometer, and 12 LEDs
-
-  This code will:
-  1. Toggle SAS on and off with the button press.
-  2. Change between 12 SAS modes using a potentiometer.
-  3. Light up the corresponding LED to indicate the active SAS mode.
-*/
-
 #include "KerbalSimpit.h"
 
 // Pin configuration
@@ -21,6 +12,9 @@ const int dataPin = 11;  // Pin connected to DS (Data Pin) of 74HC595
 // Variables to store the button state
 bool buttonState = false;
 bool lastButtonState = false;
+byte myCurrentSASMode;
+int16_t mySASModeAvailability;
+bool echoReceived = false;
 
 // Variables for debouncing the button
 unsigned long lastDebounceTime = 0;
@@ -28,10 +22,12 @@ unsigned long debounceDelay = 50; // Debounce delay in milliseconds
 
 // Variable to track the SAS state
 bool sasState = false;
-
 // Variables for SAS mode
-int lastPotValue = 0;
 int currentSASMode = 0;
+
+// Variables for millis() timing
+unsigned long sasModeChangeTime = 0;
+unsigned long sasModeDelay = 1500; // Delay time for SAS mode change
 
 // Declare a KerbalSimpit object that will communicate using the "Serial" device.
 KerbalSimpit mySimpit(Serial);
@@ -68,10 +64,6 @@ void setup() {
   pinMode(clockPin, OUTPUT);
   pinMode(dataPin, OUTPUT);
 
-  // Set up the built-in LED
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
-
   // Attempt to handshake with the plugin
   while (!mySimpit.init()) {
     delay(100);
@@ -81,6 +73,7 @@ void setup() {
   mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
   mySimpit.inboundHandler(messageHandler);
   mySimpit.registerChannel(ACTIONSTATUS_MESSAGE);
+  mySimpit.registerChannel(SAS_MODE_INFO_MESSAGE);
 }
 
 void loop() {
@@ -103,12 +96,22 @@ void loop() {
       // If button is pressed, toggle SAS
       if (buttonState == LOW) {
         sasState = !sasState;
+        
         if (sasState) {
+          // Activate SAS in the game
           mySimpit.activateAction(SAS_ACTION);
           mySimpit.printToKSP("SAS Activated", PRINT_TO_SCREEN);
+          
+
+          // Update the SAS mode based on current potentiometer value
+          updateSASModeFromPot();
         } else {
+          // Deactivate SAS in the game and turn off LEDs
           mySimpit.deactivateAction(SAS_ACTION);
           mySimpit.printToKSP("SAS Deactivated", PRINT_TO_SCREEN);
+          
+          // Update LEDs to reflect the current state
+          updateSASLEDs(currentSASMode, sasState);
         }
       }
     }
@@ -117,49 +120,84 @@ void loop() {
   // Update the previous button state
   lastButtonState = reading;
 
-  // Read the potentiometer value
-  int potValue = analogRead(POT_PIN);
-  int potIndex = map(potValue, 0, 1023, 0, NUM_SAS_MODES - 1); // Map to 12 SAS modes
-
-  // Change SAS mode if potentiometer value changed
-  if (potIndex != currentSASMode) {
-    currentSASMode = potIndex;
-    mySimpit.setSASMode(currentSASMode);
-    mySimpit.printToKSP("SAS Mode Changed", PRINT_TO_SCREEN);
+  // Only update the SAS mode if SAS is active
+  if (sasState) {
+    updateSASModeFromPot();
   }
-
-  // Update the LEDs to reflect the current SAS mode
-  updateShiftRegisters(currentSASMode);
-
-  // Update the LED to reflect the SAS state
-  digitalWrite(LED_BUILTIN, sasState ? HIGH : LOW);
-
-  // Small delay to avoid rapid polling
-  delay(100);
 }
 
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
-  if (messageType == ACTIONSTATUS_MESSAGE && msgSize == 1) {
-    // Update the SAS state
-    sasState = msg[0] & SAS_ACTION;
+  switch (messageType) {
+    case ECHO_RESP_MESSAGE: {
+        echoReceived = true;
+      } break;
 
-    // Update the built-in LED to match the SAS state
-    digitalWrite(LED_BUILTIN, sasState ? HIGH : LOW);
+    case ACTIONSTATUS_MESSAGE: {
+        if (msgSize == 1) {
+          bool newSasState = msg[0] & SAS_ACTION;
+
+          if (newSasState && !sasState) {
+            // SAS was turned on externally
+            sasState = true;
+            mySimpit.printToKSP("SAS Activated Externally", PRINT_TO_SCREEN);
+            
+            // Update the SAS mode based on current potentiometer value
+            updateSASModeFromPot();
+          } else if (!newSasState && sasState) {
+            // SAS was turned off externally
+            sasState = false;
+            
+            mySimpit.printToKSP("SAS Deactivated Externally", PRINT_TO_SCREEN);
+
+            // Update LEDs to reflect the current state and mode
+            updateSASLEDs(currentSASMode, sasState);
+          }
+        }
+      } break;
+
+    case SAS_MODE_INFO_MESSAGE: {
+        if (msgSize == sizeof(SASInfoMessage)) {
+          SASInfoMessage sasInfoMsg = parseMessage<SASInfoMessage>(msg);
+          myCurrentSASMode = sasInfoMsg.currentSASMode;
+          mySASModeAvailability = sasInfoMsg.SASModeAvailability;
+        }
+      } break;
   }
 }
 
-// Function to update the shift registers based on the current SAS mode
-void updateShiftRegisters(int modeIndex) {
+void updateSASModeFromPot() {
+  int potValue = analogRead(POT_PIN);
+  int potIndex = map(potValue, 0, 1023, 0, NUM_SAS_MODES - 1);
+  String sasModeString = String(myCurrentSASMode);
+  mySimpit.printToKSP(sasModeString, PRINT_TO_SCREEN);
+
+
+  if (myCurrentSASMode != potIndex) {
+    currentSASMode = potIndex;
+   
+    mySimpit.setSASMode(currentSASMode);
+    mySimpit.printToKSP("SAS Mode Changed", PRINT_TO_SCREEN);
+    
+    // Update the LEDs to reflect the current SAS mode and state
+    updateSASLEDs(currentSASMode, sasState);
+  }
+}
+
+// Function to update both the SAS mode LEDs and the SAS state LED
+void updateSASLEDs(int modeIndex, bool state) {
   byte data1 = 0x00;  // Initialize all LEDs off for SR1
   byte data2 = 0x00;  // Initialize all LEDs off for SR2
 
-  // Determine which LED to turn on based on the mode index
-  if (modeIndex < 8) {
-    // Turn on corresponding LED in SR1
-    data1 |= ledAddresses[modeIndex];
-  } else {
-    // Turn on corresponding LED in SR2
-    data2 |= ledAddresses[modeIndex];
+  if (state) {
+    // Determine which LED to turn on based on the mode index
+    if (modeIndex < 8) {
+      data1 |= ledAddresses[modeIndex];
+    } else if (modeIndex >= 8 && modeIndex < 12) {
+      data2 |= ledAddresses[modeIndex];
+    }
+
+    // Turn on the SAS state LED if SAS is enabled
+    data2 |= 0x10; // Assuming the LED at index 12 is the 5th LED in SR2
   }
 
   // Update the shift registers with the new LED states
