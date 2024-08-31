@@ -4,6 +4,12 @@
 #include <SerLCD.h>
 #include <PayloadStructs.h>
 
+
+// Shift register pin configuration
+const int LATCH_PIN = 15;  // Pin connected to ST_CP (Latch Pin) of 74HC595
+const int CLOCK_PIN = 14; // Pin connected to SH_CP (Clock Pin) of 74HC595
+const int DATA_PIN = 16;  // Pin connected to DS (Data Pin) of 74HC595
+
 // Constants
 const int THROTTLE_PIN = A0;       // the pin used for controlling throttle
 const int PITCH_PIN = A1;          // the pin used for controlling pitch
@@ -12,6 +18,7 @@ const int YAW_PIN = A3;            // the pin used for controlling yaw
 const int TRANSLATE_X_PIN = A5;    // the pin used for controlling translation X
 const int TRANSLATE_Y_PIN = A6;    // the pin used for controlling translation Y
 const int TRANSLATE_Z_PIN = A4;    // the pin used for controlling translation Z
+const int POT_PIN = A7;        // Potentiometer for changing SAS mode
 const int BRAKE_SWITCH = 6;
 const int GEAR_SWITCH = 7;
 const int RCS_SWITCH = 8;
@@ -50,6 +57,21 @@ enum ButtonState {
   BUTTON_HIGH,
   BUTTON_LOW
 };
+
+// SAS mode constants
+const int NUM_SAS_MODES = 12; // Number of SAS modes available
+
+// LED address array for shift registers (12 LEDs)
+const byte LED_ADDRESSES[NUM_SAS_MODES] = {
+  0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, // SR1 LEDs
+  0x01, 0x02, 0x04, 0x08  // SR2 LEDs
+};
+
+bool sasState = false;
+bool echoReceived = false;
+byte myCurrentSASMode = 0;
+int16_t mySASModeAvailability = 0;
+int currentSASMode = 0;
 
 // Global Variables
 KerbalSimpit mySimpit(Serial);
@@ -203,7 +225,7 @@ void loop() {
 // Function to connect to Kerbal Space Program
 void connectToKSP() {
   while (!mySimpit.init()) {
-    delay(250);
+    delay(100);
   }
   isConnected = true;
   mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
@@ -220,7 +242,7 @@ void connectToKSP() {
   mySimpit.registerChannel(ATMO_CONDITIONS_MESSAGE);
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
   mySimpit.registerChannel(ACTIONSTATUS_MESSAGE);
-  //mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
+  mySimpit.registerChannel(SAS_MODE_INFO_MESSAGE);
   
 }
 
@@ -687,6 +709,89 @@ void sendRotationCommands() {
   mySimpit.send(ROTATION_MESSAGE, rotMsg);
 }
 
+void updateSASModeFromPot() {
+  int potValue = analogRead(POT_PIN);
+  int potIndex = map(potValue, 0, 1023, 0, NUM_SAS_MODES - 1);
+
+  String sasModeString = String(myCurrentSASMode);
+  mySimpit.printToKSP(sasModeString, PRINT_TO_SCREEN);
+
+  if (myCurrentSASMode != potIndex) {
+    currentSASMode = potIndex;
+    mySimpit.setSASMode(currentSASMode);
+    mySimpit.printToKSP("SAS Mode Changed", PRINT_TO_SCREEN);
+    updateSASLEDs(currentSASMode, sasState);
+  }
+}
+
+void updateSASLEDs(int modeIndex, bool state) {
+  byte data1 = 0x00;  // LEDs for SR1
+  byte data2 = 0x00;  // LEDs for SR2
+
+  if (state) {
+    if (modeIndex < 8) {
+      data1 |= LED_ADDRESSES[modeIndex];
+    } else {
+      data2 |= LED_ADDRESSES[modeIndex];
+    }
+    data2 |= 0x10; // Turn on the SAS state LED
+  }
+
+  updateShiftRegisters(data1, data2);
+}
+
+void updateShiftRegisters(byte data1, byte data2) {
+  digitalWrite(LATCH_PIN, LOW);
+  shiftOut(DATA_PIN, CLOCK_PIN, data2);
+  shiftOut(DATA_PIN, CLOCK_PIN, data1);
+  digitalWrite(LATCH_PIN, HIGH);
+}
+
+void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(myClockPin, LOW);
+    digitalWrite(myDataPin, (myDataOut & (1 << i)) ? HIGH : LOW);
+    digitalWrite(myClockPin, HIGH);
+    digitalWrite(myDataPin, LOW);
+  }
+  digitalWrite(myClockPin, LOW);
+}
+
+void handleActionStatusMessage(byte msg[], byte msgSize) {
+  if (msgSize == 1) {
+    bool newSasState = msg[0] & SAS_ACTION;
+    if (newSasState != sasState) {
+      sasState = newSasState;
+      mySimpit.printToKSP(sasState ? "SAS Activated Externally" : "SAS Deactivated Externally", PRINT_TO_SCREEN);
+      updateSASLEDs(currentSASMode, sasState);
+      if (sasState) {
+        updateSASModeFromPot();
+      }
+    }
+  }
+}
+
+void toggleSAS() {
+  sasState = !sasState;
+  if (sasState) {
+    mySimpit.activateAction(SAS_ACTION);
+    mySimpit.printToKSP("SAS Activated", PRINT_TO_SCREEN);
+    updateSASModeFromPot();
+  } else {
+    mySimpit.deactivateAction(SAS_ACTION);
+    mySimpit.printToKSP("SAS Deactivated", PRINT_TO_SCREEN);
+    updateSASLEDs(currentSASMode, sasState);
+  }
+}
+
+void handleSASModeInfoMessage(byte msg[], byte msgSize) {
+  if (msgSize == sizeof(SASInfoMessage)) {
+    SASInfoMessage sasInfoMsg = parseMessage<SASInfoMessage>(msg);
+    myCurrentSASMode = sasInfoMsg.currentSASMode;
+    mySASModeAvailability = sasInfoMsg.SASModeAvailability;
+  }
+}
+
 // Message handler for Kerbal Simpit
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
   switch (messageType) {
@@ -730,5 +835,14 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
         myTemplimits = parseMessage<tempLimitMessage>(msg);
       }
       break;
+
+    case ACTIONSTATUS_MESSAGE:
+      handleActionStatusMessage(msg, msgSize);
+      break;
+
+    case SAS_MODE_INFO_MESSAGE:
+      handleSASModeInfoMessage(msg, msgSize);
+      break;
   }
+  
 }
