@@ -19,8 +19,10 @@ const byte LED_ADDRESSES[NUM_SAS_MODES] = {
 };
 
 // Variables
-bool buttonState = false;
-bool lastButtonState = false;
+bool buttonS
+  tate = false;
+bo
+ol lastButtonState = false;
 bool sasState = false;
 bool echoReceived = false;
 byte myCurrentSASMode = 0;

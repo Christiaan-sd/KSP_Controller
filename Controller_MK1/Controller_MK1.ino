@@ -67,11 +67,12 @@ const byte LED_ADDRESSES[NUM_SAS_MODES] = {
   0x01, 0x02, 0x04, 0x08  // SR2 LEDs
 };
 
-bool sasState = false;
+bool game_SAS_State = false;
+bool Controller_SAS_State = false;
 bool echoReceived = false;
-byte myCurrentSASMode = 0;
+byte ControllerSASMode = 0;
 int16_t mySASModeAvailability = 0;
-int currentSASMode = 0;
+int GameSASMode = 0;
 
 // Global Variables
 KerbalSimpit mySimpit(Serial);
@@ -171,6 +172,10 @@ void setup() {
   pinMode(SOLAR_SWITCH, INPUT_PULLUP);
   pinMode(LIGHTS_SWITCH, INPUT_PULLUP);
   pinMode(LIGHTS_SWITCH_LED, OUTPUT);
+  pinMode(POT_PIN, INPUT);
+  pinMode(LATCH_PIN, OUTPUT);
+  pinMode(CLOCK_PIN, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
 
     // Read initial state of switches
   lastSASSwitchState = digitalRead(SAS_SWITCH);
@@ -195,9 +200,9 @@ void loop() {
   handleSwitches(now);
   handleLCDButtons(now);
   handleJoystickButtons(now);
-  
+  //pdateSASModeFromPot();
   handleTempAlarm();
-  mySimpit.update();
+  
 
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
@@ -219,6 +224,11 @@ void loop() {
   } else {
     sendTranslationCommands();
   }
+
+  mySimpit.printToKSP("SAS STATE = " + game_SAS_State, PRINT_TO_SCREEN);
+
+
+  mySimpit.update();
 
 }
 
@@ -354,11 +364,14 @@ void handleSwitches(unsigned long now) {
 
     if (readingSASSwitch == LOW) {  // Button pressed
       
-      mySimpit.deactivateAction(SAS_ACTION);
+    mySimpit.deactivateAction(SAS_ACTION);
+    mySimpit.printToKSP("SAS Deactivated", PRINT_TO_SCREEN);
+    updateSASLEDs(GameSASMode, Controller_SAS_State);
 
     } else {  // Button released
-     
-      mySimpit.activateAction(SAS_ACTION);
+    mySimpit.activateAction(SAS_ACTION);
+    mySimpit.printToKSP("SAS Activated", PRINT_TO_SCREEN);
+    updateSASModeFromPot();
     }
 
     // Update the last state
@@ -711,16 +724,16 @@ void sendRotationCommands() {
 
 void updateSASModeFromPot() {
   int potValue = analogRead(POT_PIN);
-  int potIndex = map(potValue, 0, 1023, 0, NUM_SAS_MODES - 1);
-
-  String sasModeString = String(myCurrentSASMode);
-  mySimpit.printToKSP(sasModeString, PRINT_TO_SCREEN);
-
-  if (myCurrentSASMode != potIndex) {
-    currentSASMode = potIndex;
-    mySimpit.setSASMode(currentSASMode);
+  int ControllerSASMode = map(potValue, 0, 1023, 0, NUM_SAS_MODES - 1);
+  mySimpit.printToKSP("IN UPDATE SAS MODE FROM POT", PRINT_TO_SCREEN);
+  if (GameSASMode != ControllerSASMode) {
+    mySimpit.printToKSP("IN IF STATEMENT UPDATE SAS MODE FROM POT!", PRINT_TO_SCREEN);
+    mySimpit.printToKSP("Game SAS mode: "  + String(GameSASMode), PRINT_TO_SCREEN);
+    mySimpit.printToKSP("Controller SAS mode: "  + String(ControllerSASMode), PRINT_TO_SCREEN);
+    mySimpit.setSASMode(ControllerSASMode);
     mySimpit.printToKSP("SAS Mode Changed", PRINT_TO_SCREEN);
-    updateSASLEDs(currentSASMode, sasState);
+    updateSASLEDs(GameSASMode, Controller_SAS_State);
+
   }
 }
 
@@ -757,40 +770,7 @@ void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
   digitalWrite(myClockPin, LOW);
 }
 
-void handleActionStatusMessage(byte msg[], byte msgSize) {
-  if (msgSize == 1) {
-    bool newSasState = msg[0] & SAS_ACTION;
-    if (newSasState != sasState) {
-      sasState = newSasState;
-      mySimpit.printToKSP(sasState ? "SAS Activated Externally" : "SAS Deactivated Externally", PRINT_TO_SCREEN);
-      updateSASLEDs(currentSASMode, sasState);
-      if (sasState) {
-        updateSASModeFromPot();
-      }
-    }
-  }
-}
 
-void toggleSAS() {
-  sasState = !sasState;
-  if (sasState) {
-    mySimpit.activateAction(SAS_ACTION);
-    mySimpit.printToKSP("SAS Activated", PRINT_TO_SCREEN);
-    updateSASModeFromPot();
-  } else {
-    mySimpit.deactivateAction(SAS_ACTION);
-    mySimpit.printToKSP("SAS Deactivated", PRINT_TO_SCREEN);
-    updateSASLEDs(currentSASMode, sasState);
-  }
-}
-
-void handleSASModeInfoMessage(byte msg[], byte msgSize) {
-  if (msgSize == sizeof(SASInfoMessage)) {
-    SASInfoMessage sasInfoMsg = parseMessage<SASInfoMessage>(msg);
-    myCurrentSASMode = sasInfoMsg.currentSASMode;
-    mySASModeAvailability = sasInfoMsg.SASModeAvailability;
-  }
-}
 
 // Message handler for Kerbal Simpit
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
@@ -837,11 +817,19 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
       break;
 
     case ACTIONSTATUS_MESSAGE:
-      handleActionStatusMessage(msg, msgSize);
+        if (msgSize == 1) {
+        bool game_SAS_State = msg[0] & SAS_ACTION;
+        
+      }
       break;
 
     case SAS_MODE_INFO_MESSAGE:
-      handleSASModeInfoMessage(msg, msgSize);
+      if (msgSize == sizeof(SASInfoMessage)) {
+        SASInfoMessage sasInfoMsg = parseMessage<SASInfoMessage>(msg);
+        GameSASMode = sasInfoMsg.currentSASMode;
+        mySASModeAvailability = sasInfoMsg.SASModeAvailability;
+        updateSASModeFromPot();
+  }
       break;
   }
   
