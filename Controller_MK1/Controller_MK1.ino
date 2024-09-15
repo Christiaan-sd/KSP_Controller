@@ -10,6 +10,30 @@ const int LATCH_PIN = 15;  // Pin connected to ST_CP (Latch Pin) of 74HC595
 const int CLOCK_PIN = 14; // Pin connected to SH_CP (Clock Pin) of 74HC595
 const int DATA_PIN = 16;  // Pin connected to DS (Data Pin) of 74HC595
 
+// Variables to store LED states
+byte ledStates1 = 0x00;  // LEDs 1-8 (first shift register)
+byte ledStates2 = 0x00;  // LEDs 9-16 (second shift register)
+
+// Define each LED with its corresponding bit position in the shift registers
+const int LED_SAS = 0;             // First shift register
+const int LED_AUTO_PILOT = 1;
+const int LED_ANTI_NORMAL = 5;
+const int LED_NORMAL = 3;
+const int LED_RETRO_GRADE = 4;
+const int LED_PRO_GRADE = 6;
+const int LED_MANAUVER = 2;
+const int LED_STABILITY_ASSIST = 7;
+
+// Second shift register
+const int LED_RADIAL_OUT = 8;      // Second shift register
+const int LED_RADIAL_IN = 9;
+const int LED_TARGET = 10;
+const int LED_ANTI_TARGET = 11;
+const int LED_NAVIGATION = 12;
+const int LED_RCS = 13;
+const int LED_GEARS = 14;
+const int LED_BRAKES = 15;
+
 // Constants
 const int THROTTLE_PIN = A0;       // the pin used for controlling throttle
 const int PITCH_PIN = A1;          // the pin used for controlling pitch
@@ -58,21 +82,11 @@ enum ButtonState {
   BUTTON_LOW
 };
 
-// SAS mode constants
-const int NUM_SAS_MODES = 12; // Number of SAS modes available
 
-// LED address array for shift registers (12 LEDs)
-const byte LED_ADDRESSES[NUM_SAS_MODES] = {
-  0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, // SR1 LEDs
-  0x01, 0x02, 0x04, 0x08  // SR2 LEDs
-};
 
-bool game_SAS_State = false;
-bool Controller_SAS_State = false;
+
 bool echoReceived = false;
-byte ControllerSASMode = 0;
-int16_t mySASModeAvailability = 0;
-int GameSASMode = 0;
+
 
 // Global Variables
 KerbalSimpit mySimpit(Serial);
@@ -200,9 +214,8 @@ void loop() {
   handleSwitches(now);
   handleLCDButtons(now);
   handleJoystickButtons(now);
-  //pdateSASModeFromPot();
   handleTempAlarm();
-  
+  SAS_mode_pot();
 
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
@@ -224,9 +237,6 @@ void loop() {
   } else {
     sendTranslationCommands();
   }
-
-  mySimpit.printToKSP("SAS STATE = " + game_SAS_State, PRINT_TO_SCREEN);
-
 
   mySimpit.update();
 
@@ -313,10 +323,12 @@ void handleSwitches(unsigned long now) {
     if (readingRCSSwitch == LOW) {  // Button pressed
       
       mySimpit.deactivateAction(RCS_ACTION);
+      setLED(LED_RCS, false);
 
     } else {  // Button released
      
       mySimpit.activateAction(RCS_ACTION);
+      setLED(LED_RCS, true);
     }
 
     // Update the last state
@@ -330,10 +342,12 @@ void handleSwitches(unsigned long now) {
     if (readingBrakeSwitch == LOW) {  // Button pressed
       
       mySimpit.deactivateAction(BRAKES_ACTION);
+      setLED(LED_BRAKES, false);
 
     } else {  // Button released
      
       mySimpit.activateAction(BRAKES_ACTION);
+      setLED(LED_BRAKES, true);
     }
 
     // Update the last state
@@ -348,10 +362,12 @@ void handleSwitches(unsigned long now) {
     if (readingGearSwitch == LOW) {  // Button pressed
       
       mySimpit.deactivateAction(GEAR_ACTION);
+      setLED(LED_GEARS, false);
 
     } else {  // Button released
      
       mySimpit.activateAction(GEAR_ACTION);
+      setLED(LED_GEARS, true);
     }
 
     // Update the last state
@@ -362,16 +378,19 @@ void handleSwitches(unsigned long now) {
   if (readingSASSwitch != lastSASSwitchState && (now - lastDebounceTimeSASSwitch) > DEBOUNCE_DELAY) {
     lastDebounceTimeSASSwitch = now;
 
+
     if (readingSASSwitch == LOW) {  // Button pressed
       
     mySimpit.deactivateAction(SAS_ACTION);
     mySimpit.printToKSP("SAS Deactivated", PRINT_TO_SCREEN);
-    updateSASLEDs(GameSASMode, Controller_SAS_State);
+    setLED(LED_SAS, false);
 
     } else {  // Button released
     mySimpit.activateAction(SAS_ACTION);
     mySimpit.printToKSP("SAS Activated", PRINT_TO_SCREEN);
-    updateSASModeFromPot();
+    setLED(LED_SAS, true);
+
+ 
     }
 
     // Update the last state
@@ -395,33 +414,29 @@ void handleSwitches(unsigned long now) {
   }
 }
 
-
-
-
-
 // Function to handle joystick buttons with debouncing
 void handleJoystickButtons(unsigned long now) {
   int readingJoystickButtonTranslation = digitalRead(JOYSTICK_BUTTON_TRANSLATION);
   int readingJoystickButtonRotation = digitalRead(JOYSTICK_BUTTON_ROTATION);
 
-// Handle the translation button (inverted logic for pull-up)
-if (readingJoystickButtonTranslation == LOW && (now - lastDebounceTimeJoystickTranslation) > DEBOUNCE_DELAY) {
-    // Toggle the translationButtonPressed state
-    translationButtonPressed = !translationButtonPressed;
-     if (translationButtonPressed == true) {
-        mySimpit.printToKSP(F("Camera mode"), PRINT_TO_SCREEN);
-    } else {
-        mySimpit.printToKSP(F("translation mode"), PRINT_TO_SCREEN);
+    // Handle the translation button (inverted logic for pull-up)
+      if (readingJoystickButtonTranslation == LOW && (now - lastDebounceTimeJoystickTranslation) > DEBOUNCE_DELAY) {
+          // Toggle the translationButtonPressed state
+          translationButtonPressed = !translationButtonPressed;
+          if (translationButtonPressed == true) {
+              mySimpit.printToKSP(F("Camera mode"), PRINT_TO_SCREEN);
+          } else {
+              mySimpit.printToKSP(F("translation mode"), PRINT_TO_SCREEN);
+          }
+          lastDebounceTimeJoystickTranslation = now;
     }
-    lastDebounceTimeJoystickTranslation = now;
-}
 
 
-  // Handle the rotation button (inverted logic for pull-up)
-  if (readingJoystickButtonRotation == LOW && (now - lastDebounceTimeJoystickRotation) > DEBOUNCE_DELAY) {
-    mySimpit.activateAction(STAGE_ACTION);
-    lastDebounceTimeJoystickRotation = now;
-  }
+      // Handle the rotation button (inverted logic for pull-up)
+      if (readingJoystickButtonRotation == LOW && (now - lastDebounceTimeJoystickRotation) > DEBOUNCE_DELAY) {
+        mySimpit.activateAction(STAGE_ACTION);
+        lastDebounceTimeJoystickRotation = now;
+      }
 }
 
 // Function to handle LCD buttons with debouncing
@@ -652,8 +667,6 @@ void sendCameraCommands() {
   }
 }
 
-
-
 // Function to send translation commands
 void sendTranslationCommands() {
   translationMessage transMsg;
@@ -722,56 +735,6 @@ void sendRotationCommands() {
   mySimpit.send(ROTATION_MESSAGE, rotMsg);
 }
 
-void updateSASModeFromPot() {
-  int potValue = analogRead(POT_PIN);
-  int ControllerSASMode = map(potValue, 0, 1023, 0, NUM_SAS_MODES - 1);
-  mySimpit.printToKSP("IN UPDATE SAS MODE FROM POT", PRINT_TO_SCREEN);
-  if (GameSASMode != ControllerSASMode) {
-    mySimpit.printToKSP("IN IF STATEMENT UPDATE SAS MODE FROM POT!", PRINT_TO_SCREEN);
-    mySimpit.printToKSP("Game SAS mode: "  + String(GameSASMode), PRINT_TO_SCREEN);
-    mySimpit.printToKSP("Controller SAS mode: "  + String(ControllerSASMode), PRINT_TO_SCREEN);
-    mySimpit.setSASMode(ControllerSASMode);
-    mySimpit.printToKSP("SAS Mode Changed", PRINT_TO_SCREEN);
-    updateSASLEDs(GameSASMode, Controller_SAS_State);
-
-  }
-}
-
-void updateSASLEDs(int modeIndex, bool state) {
-  byte data1 = 0x00;  // LEDs for SR1
-  byte data2 = 0x00;  // LEDs for SR2
-
-  if (state) {
-    if (modeIndex < 8) {
-      data1 |= LED_ADDRESSES[modeIndex];
-    } else {
-      data2 |= LED_ADDRESSES[modeIndex];
-    }
-    data2 |= 0x10; // Turn on the SAS state LED
-  }
-
-  updateShiftRegisters(data1, data2);
-}
-
-void updateShiftRegisters(byte data1, byte data2) {
-  digitalWrite(LATCH_PIN, LOW);
-  shiftOut(DATA_PIN, CLOCK_PIN, data2);
-  shiftOut(DATA_PIN, CLOCK_PIN, data1);
-  digitalWrite(LATCH_PIN, HIGH);
-}
-
-void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
-  for (int i = 7; i >= 0; i--) {
-    digitalWrite(myClockPin, LOW);
-    digitalWrite(myDataPin, (myDataOut & (1 << i)) ? HIGH : LOW);
-    digitalWrite(myClockPin, HIGH);
-    digitalWrite(myDataPin, LOW);
-  }
-  digitalWrite(myClockPin, LOW);
-}
-
-
-
 // Message handler for Kerbal Simpit
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
   switch (messageType) {
@@ -823,14 +786,97 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
       }
       break;
 
-    case SAS_MODE_INFO_MESSAGE:
-      if (msgSize == sizeof(SASInfoMessage)) {
-        SASInfoMessage sasInfoMsg = parseMessage<SASInfoMessage>(msg);
-        GameSASMode = sasInfoMsg.currentSASMode;
-        mySASModeAvailability = sasInfoMsg.SASModeAvailability;
-        updateSASModeFromPot();
-  }
-      break;
+
   }
   
+}
+
+void SAS_mode_pot() {
+  // Read the potentiometer value (0 to 1023)
+  int potValue = analogRead(POT_PIN);
+
+  // Clear only the LEDs used in this function
+  clearSASModeLEDs();
+
+  // Define custom potentiometer ranges for each LED and turn them on accordingly
+  if (potValue >= 0 && potValue < 10) {
+    setLED(LED_AUTO_PILOT, true);
+  } else if (potValue >= 10 && potValue < 95) {
+    setLED(LED_ANTI_NORMAL, true);
+  } else if (potValue >= 95 && potValue < 195) {
+    setLED(LED_NORMAL, true);
+  } else if (potValue >= 195 && potValue < 310) {
+    setLED(LED_RETRO_GRADE, true);
+  } else if (potValue >= 310 && potValue < 420) {
+    setLED(LED_PRO_GRADE, true);
+  } else if (potValue >= 420 && potValue < 507) {
+    setLED(LED_MANAUVER, true);
+  } else if (potValue >= 507 && potValue < 600) {
+    setLED(LED_STABILITY_ASSIST, true);
+  } else if (potValue >= 600 && potValue < 690) {
+    setLED(LED_RADIAL_OUT, true);
+  } else if (potValue >= 690 && potValue < 790) {
+    setLED(LED_RADIAL_IN, true);
+  } else if (potValue >= 790 && potValue < 875) {
+    setLED(LED_TARGET, true);
+  } else if (potValue >= 875 && potValue < 975) {
+    setLED(LED_ANTI_TARGET, true);
+  } else if (potValue >= 975 && potValue < 1024) {
+    setLED(LED_NAVIGATION, true);
+  }
+
+  // Update shift registers to reflect the changes
+  updateShiftRegisters();
+}
+
+// Function to clear only the LEDs used in SAS_mode_pot()
+void clearSASModeLEDs() {
+  setLED(LED_AUTO_PILOT, false);
+  setLED(LED_ANTI_NORMAL, false);
+  setLED(LED_NORMAL, false);
+  setLED(LED_RETRO_GRADE, false);
+  setLED(LED_PRO_GRADE, false);
+  setLED(LED_MANAUVER, false);
+  setLED(LED_STABILITY_ASSIST, false);
+  setLED(LED_RADIAL_OUT, false);
+  setLED(LED_RADIAL_IN, false);
+  setLED(LED_TARGET, false);
+  setLED(LED_ANTI_TARGET, false);
+  setLED(LED_NAVIGATION, false);
+}
+
+// Function to set the state of a specific LED (on or off)
+void setLED(int led, bool state) {
+  if (led < 8) {  // First shift register (LEDs 0-7)
+    if (state) {
+      ledStates1 |= (1 << led);   // Set bit to 1 (turn on)
+    } else {
+      ledStates1 &= ~(1 << led);  // Set bit to 0 (turn off)
+    }
+  } else {        // Second shift register (LEDs 8-15)
+    int shiftRegisterLED = led - 8;
+    if (state) {
+      ledStates2 |= (1 << shiftRegisterLED);  // Set bit to 1 (turn on)
+    } else {
+      ledStates2 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
+    }
+  }
+}
+
+// Function to update the shift registers with current LED states
+void updateShiftRegisters() {
+  digitalWrite(LATCH_PIN, LOW);         // Prepare to send data
+  shiftOut(DATA_PIN, CLOCK_PIN, ledStates2);  // Send data for SR2 (LEDs 9-16)
+  shiftOut(DATA_PIN, CLOCK_PIN, ledStates1);  // Send data for SR1 (LEDs 1-8)
+  digitalWrite(LATCH_PIN, HIGH);        // Latch the data (output to LEDs)
+}
+
+// Function to shift out data to the shift registers (74HC595)
+void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(myClockPin, LOW);
+    digitalWrite(myDataPin, (myDataOut & (1 << i)) ? HIGH : LOW);
+    digitalWrite(myClockPin, HIGH);
+  }
+  digitalWrite(myClockPin, LOW);
 }

@@ -8,26 +8,29 @@ const int DATA_PIN = 16;   // Pin connected to DS (Data Pin) of 74HC595
 
 const int POT_PIN = A7;    // Potentiometer for LED control
 
-// Number of LEDs (total across two shift registers)
-const int NUM_LEDS = 16;
+// Variables to store LED states
+byte ledStates1 = 0x00;  // LEDs 1-8 (first shift register)
+byte ledStates2 = 0x00;  // LEDs 9-16 (second shift register)
 
-// Define each LED with its corresponding address in the shift registers
-const byte LED_SAS = 0x01;
-const byte LED_AUTO_PILOT = 0x02;
-const byte LED_ANTI_NORMAL = 0x20;
-const byte LED_NORMAL = 0x08;
-const byte LED_RETRO_GRADE = 0x10;
-const byte LED_PRO_GRADE = 0x40;
-const byte LED_MANAUVER = 0x04;
-const byte LED_STABILITY_ASSIST = 0x80;
-const byte LED_RADIAL_OUT = 0x01;
-const byte LED_RADIAL_IN = 0x02;
-const byte LED_TARGET = 0x04; 
-const byte LED_ANTI_TARGET = 0x08;
-const byte LED_NAVIGATION = 0x10;
-const byte LED_RCS = 0x20;
-const byte LED_GEARS = 0x40; 
-const byte LED_BRAKES = 0x80;
+// Define each LED with its corresponding bit position in the shift registers
+const int LED_SAS = 0;             // First shift register
+const int LED_AUTO_PILOT = 1;
+const int LED_ANTI_NORMAL = 5;
+const int LED_NORMAL = 3;
+const int LED_RETRO_GRADE = 4;
+const int LED_PRO_GRADE = 6;
+const int LED_MANAUVER = 2;
+const int LED_STABILITY_ASSIST = 7;
+
+// Second shift register
+const int LED_RADIAL_OUT = 8;      // Second shift register
+const int LED_RADIAL_IN = 9;
+const int LED_TARGET = 10;
+const int LED_ANTI_TARGET = 11;
+const int LED_NAVIGATION = 12;
+const int LED_RCS = 13;
+const int LED_GEARS = 14;
+const int LED_BRAKES = 15;
 
 void setup() {
   pinMode(LATCH_PIN, OUTPUT);
@@ -37,55 +40,87 @@ void setup() {
 }
 
 void loop() {
-SAS_mode_pot();
-
+  SAS_mode_pot();
 }
 
 void SAS_mode_pot() {
-    // Read the potentiometer value (0 to 1023)
+  // Read the potentiometer value (0 to 1023)
   int potValue = analogRead(POT_PIN);
 
-  // Create two byte variables to store the states of the shift registers
-  byte data1 = 0x00;  // LEDs for SR1 (first 8 LEDs)
-  byte data2 = 0x00;  // LEDs for SR2 (next 8 LEDs)
+  // Clear only the LEDs used in this function
+  clearSASModeLEDs();
 
-  // Define your own custom potentiometer ranges for each LED
+  // Define custom potentiometer ranges for each LED and turn them on accordingly
   if (potValue >= 0 && potValue < 10) {
-    data1 = LED_AUTO_PILOT;
+    setLED(LED_AUTO_PILOT, true);
   } else if (potValue >= 10 && potValue < 95) {
-    data1 = LED_ANTI_NORMAL;
+    setLED(LED_ANTI_NORMAL, true);
   } else if (potValue >= 95 && potValue < 195) {
-    data1 = LED_NORMAL;
+    setLED(LED_NORMAL, true);
   } else if (potValue >= 195 && potValue < 310) {
-    data1 = LED_RETRO_GRADE;
+    setLED(LED_RETRO_GRADE, true);
   } else if (potValue >= 310 && potValue < 420) {
-    data1 = LED_PRO_GRADE;
+    setLED(LED_PRO_GRADE, true);
   } else if (potValue >= 420 && potValue < 507) {
-    data1 = LED_MANAUVER;
+    setLED(LED_MANAUVER, true);
   } else if (potValue >= 507 && potValue < 600) {
-    data1 = LED_STABILITY_ASSIST;
+    setLED(LED_STABILITY_ASSIST, true);
   } else if (potValue >= 600 && potValue < 690) {
-    data2 = LED_RADIAL_OUT;
+    setLED(LED_RADIAL_OUT, true);
   } else if (potValue >= 690 && potValue < 790) {
-    data2 = LED_RADIAL_IN;
+    setLED(LED_RADIAL_IN, true);
   } else if (potValue >= 790 && potValue < 875) {
-    data2 = LED_TARGET;
+    setLED(LED_TARGET, true);
   } else if (potValue >= 875 && potValue < 975) {
-    data2 = LED_ANTI_TARGET;
+    setLED(LED_ANTI_TARGET, true);
   } else if (potValue >= 975 && potValue < 1024) {
-    data2 = LED_NAVIGATION;
+    setLED(LED_NAVIGATION, true);
   }
 
-  // Update the shift registers with the LED states
-  updateShiftRegisters(data1, data2);
+  // Update shift registers to reflect the changes
+  updateShiftRegisters();
 }
 
-// Function to update the shift registers with new LED data
-void updateShiftRegisters(byte data1, byte data2) {
-  digitalWrite(LATCH_PIN, LOW);     // Prepare to send data
-  shiftOut(DATA_PIN, CLOCK_PIN, data2);  // Send data for SR2 (LEDs 9-16)
-  shiftOut(DATA_PIN, CLOCK_PIN, data1);  // Send data for SR1 (LEDs 1-8)
-  digitalWrite(LATCH_PIN, HIGH);    // Latch the data (output to LEDs)
+// Function to clear only the LEDs used in SAS_mode_pot()
+void clearSASModeLEDs() {
+  setLED(LED_AUTO_PILOT, false);
+  setLED(LED_ANTI_NORMAL, false);
+  setLED(LED_NORMAL, false);
+  setLED(LED_RETRO_GRADE, false);
+  setLED(LED_PRO_GRADE, false);
+  setLED(LED_MANAUVER, false);
+  setLED(LED_STABILITY_ASSIST, false);
+  setLED(LED_RADIAL_OUT, false);
+  setLED(LED_RADIAL_IN, false);
+  setLED(LED_TARGET, false);
+  setLED(LED_ANTI_TARGET, false);
+  setLED(LED_NAVIGATION, false);
+}
+
+// Function to set the state of a specific LED (on or off)
+void setLED(int led, bool state) {
+  if (led < 8) {  // First shift register (LEDs 0-7)
+    if (state) {
+      ledStates1 |= (1 << led);   // Set bit to 1 (turn on)
+    } else {
+      ledStates1 &= ~(1 << led);  // Set bit to 0 (turn off)
+    }
+  } else {        // Second shift register (LEDs 8-15)
+    int shiftRegisterLED = led - 8;
+    if (state) {
+      ledStates2 |= (1 << shiftRegisterLED);  // Set bit to 1 (turn on)
+    } else {
+      ledStates2 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
+    }
+  }
+}
+
+// Function to update the shift registers with current LED states
+void updateShiftRegisters() {
+  digitalWrite(LATCH_PIN, LOW);         // Prepare to send data
+  shiftOut(DATA_PIN, CLOCK_PIN, ledStates2);  // Send data for SR2 (LEDs 9-16)
+  shiftOut(DATA_PIN, CLOCK_PIN, ledStates1);  // Send data for SR1 (LEDs 1-8)
+  digitalWrite(LATCH_PIN, HIGH);        // Latch the data (output to LEDs)
 }
 
 // Function to shift out data to the shift registers (74HC595)
