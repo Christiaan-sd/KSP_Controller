@@ -34,6 +34,13 @@ const int LED_RCS = 13;
 const int LED_GEARS = 14;
 const int LED_BRAKES = 15;
 
+// LEDS not on shift regiser :)
+const int LED_SCIENCE = 23;  // Digital pin 13
+const int LED_RADS = 17;  // Digital pin 17
+const int LED_SOLAR = 18;    // Digital pin 0
+const int LED_LIGHTS = 19;    // Digital pin 1
+
+
 // Constants
 const int THROTTLE_PIN = A0;       // the pin used for controlling throttle
 const int PITCH_PIN = A1;          // the pin used for controlling pitch
@@ -55,6 +62,7 @@ const int JOYSTICK_BUTTON_TRANSLATION = 5;
 const int JOYSTICK_BUTTON_ROTATION = 4;
 const int LCD_SWITCH_PIN_LEFT = 2;
 const int LCD_SWITCH_PIN_RIGHT = 3;
+const int SCIENCE_BUTTON_PIN = 24;
 const unsigned long DEBOUNCE_DELAY = 50; // Debounce delay in milliseconds
 const unsigned int LCD_UPDATE_INTERVAL = 125;  // LCD update frequency
 const unsigned int SEND_INTERVAL = 1500;
@@ -108,6 +116,7 @@ unsigned long lastDebounceTimeSASSwitch = 0;
 unsigned long lastDebounceTimeRADSSwitch = 0;
 unsigned long lastDebounceTimeSolarSwitch = 0;
 unsigned long lastDebounceTimeLightsSwitch = 0;
+unsigned long lastDebounceTimeScienceButton = 0;
 
 // Variables to store the current and previous readings
 int lastSASSwitchState = HIGH;  // Assume switch is not pressed initially
@@ -117,14 +126,16 @@ int lastBrakeSwitchState = HIGH;
 int lastRCSSwitchState = HIGH;
 int lastRADSSwitchState = HIGH;
 int lastSolarSwitchState = HIGH;
+int lastScienceButtonState = HIGH;  // Last stable state of the button
+bool scienceButtonPressed = false;  // Track whether the button is pressed
 
+int lastpotvalue = 0;
 int lcdScreenCase = 0;
 int lcdScreenCaseBeforeAlarm = 0;
 bool lcdAlarmState = false;
 bool lcdAlarmStateOverride = false;
 
 bool translationButtonPressed = false;
-
 // Global variable declarations
 
 airspeedMessage myAirspeed;
@@ -176,6 +187,7 @@ void setup() {
   // Set pin modes
   pinMode(LCD_SWITCH_PIN_RIGHT, INPUT_PULLUP);
   pinMode(LCD_SWITCH_PIN_LEFT, INPUT_PULLUP);
+  pinMode(SCIENCE_BUTTON_PIN, INPUT_PULLUP);
   pinMode(JOYSTICK_BUTTON_TRANSLATION, INPUT_PULLUP);
   pinMode(JOYSTICK_BUTTON_ROTATION, INPUT_PULLUP);
   pinMode(BRAKE_SWITCH, INPUT_PULLUP);
@@ -190,6 +202,10 @@ void setup() {
   pinMode(LATCH_PIN, OUTPUT);
   pinMode(CLOCK_PIN, OUTPUT);
   pinMode(DATA_PIN, OUTPUT);
+  pinMode(LED_SCIENCE, OUTPUT);
+  pinMode(LED_RADS, OUTPUT);
+  pinMode(LED_SOLAR, OUTPUT);
+  pinMode(LED_LIGHTS, OUTPUT);
 
     // Read initial state of switches
   lastSASSwitchState = digitalRead(SAS_SWITCH);
@@ -212,10 +228,12 @@ void setup() {
 void loop() {
   unsigned long now = millis();
   handleSwitches(now);
+  handleButtons(now);
   handleLCDButtons(now);
   handleJoystickButtons(now);
   handleTempAlarm();
   SAS_mode_pot();
+
 
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
@@ -285,10 +303,12 @@ void handleSwitches(unsigned long now) {
     if (readingSolarSwitch == LOW) {  // Button pressed
       mySimpit.deactivateCAG(9);
       //mySimpit.toggleCAG(9);
+      digitalWrite(LED_SOLAR, LOW);
     } else {  // Button released
      
       //mySimpit.toggleCAG(9);
       mySimpit.activateCAG(9);
+      digitalWrite(LED_SOLAR, HIGH);
     }
 
     // Update the last state
@@ -304,11 +324,11 @@ void handleSwitches(unsigned long now) {
     if (readingRADSSwitch == LOW) {  // Button pressed
       
       mySimpit.deactivateCAG(10);
-      
+      digitalWrite(LED_RADS, LOW);
 
     } else {  // Button released
      mySimpit.activateCAG(10);
-
+      digitalWrite(LED_RADS, HIGH);
       
     }
 
@@ -403,15 +423,19 @@ void handleSwitches(unsigned long now) {
 
     if (readingLightsSwitch == LOW) {  // Button pressed
       
-      mySimpit.deactivateAction(LIGHT_ACTION); 
+      mySimpit.deactivateAction(LIGHT_ACTION);
+      digitalWrite(LED_LIGHTS, LOW);
+
     } else {  // Button released
       
       mySimpit.activateAction(LIGHT_ACTION);
+      digitalWrite(LED_LIGHTS, HIGH);
     }
 
     // Update the last state
     lastLightsSwitchState = readingLightsSwitch;
   }
+  updateShiftRegisters();
 }
 
 // Function to handle joystick buttons with debouncing
@@ -437,6 +461,25 @@ void handleJoystickButtons(unsigned long now) {
         mySimpit.activateAction(STAGE_ACTION);
         lastDebounceTimeJoystickRotation = now;
       }
+}
+
+void handleButtons(unsigned long now) {
+  int readingScienceButton = digitalRead(SCIENCE_BUTTON_PIN);
+
+//--------------------
+  // Check for state change and debounce
+  if (readingScienceButton != lastScienceButtonState && (now - lastDebounceTimeScienceButton) > DEBOUNCE_DELAY) {
+    if (readingScienceButton == LOW) {
+      scienceButtonPressed = !scienceButtonPressed;
+      mySimpit.printToKSP("Science button pressed", PRINT_TO_SCREEN);
+      digitalWrite(LED_SCIENCE, scienceButtonPressed ? HIGH : LOW);
+    }
+    lastDebounceTimeScienceButton = now;
+  }
+  lastScienceButtonState = readingScienceButton;
+//--------------------
+
+updateShiftRegisters();
 }
 
 // Function to handle LCD buttons with debouncing
@@ -794,40 +837,57 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
 void SAS_mode_pot() {
   // Read the potentiometer value (0 to 1023)
   int potValue = analogRead(POT_PIN);
+  // Check if the potentiometer value has changed by more than 10
+  if (abs(lastpotvalue - potValue) > 3) {
+    lastpotvalue = potValue;
+    mySimpit.printToKSP(" update SAS MODE", PRINT_TO_SCREEN);
 
-  // Clear only the LEDs used in this function
-  clearSASModeLEDs();
+    // Clear only the LEDs used in this function
+    clearSASModeLEDs();
 
-  // Define custom potentiometer ranges for each LED and turn them on accordingly
-  if (potValue >= 0 && potValue < 10) {
-    setLED(LED_AUTO_PILOT, true);
-  } else if (potValue >= 10 && potValue < 95) {
-    setLED(LED_ANTI_NORMAL, true);
-  } else if (potValue >= 95 && potValue < 195) {
-    setLED(LED_NORMAL, true);
-  } else if (potValue >= 195 && potValue < 310) {
-    setLED(LED_RETRO_GRADE, true);
-  } else if (potValue >= 310 && potValue < 420) {
-    setLED(LED_PRO_GRADE, true);
-  } else if (potValue >= 420 && potValue < 507) {
-    setLED(LED_MANAUVER, true);
-  } else if (potValue >= 507 && potValue < 600) {
-    setLED(LED_STABILITY_ASSIST, true);
-  } else if (potValue >= 600 && potValue < 690) {
-    setLED(LED_RADIAL_OUT, true);
-  } else if (potValue >= 690 && potValue < 790) {
-    setLED(LED_RADIAL_IN, true);
-  } else if (potValue >= 790 && potValue < 875) {
-    setLED(LED_TARGET, true);
-  } else if (potValue >= 875 && potValue < 975) {
-    setLED(LED_ANTI_TARGET, true);
-  } else if (potValue >= 975 && potValue < 1024) {
-    setLED(LED_NAVIGATION, true);
+    // Define custom potentiometer ranges for each LED and turn them on accordingly
+    if (potValue >= 0 && potValue < 10) {
+      setLED(LED_AUTO_PILOT, true);
+    } else if (potValue >= 10 && potValue < 95) {
+      setLED(LED_ANTI_NORMAL, true);
+      mySimpit.setSASMode(AP_ANTINORMAL);
+    } else if (potValue >= 95 && potValue < 195) {
+      setLED(LED_NORMAL, true);
+      mySimpit.setSASMode(AP_NORMAL);
+    } else if (potValue >= 195 && potValue < 310) {
+      setLED(LED_RETRO_GRADE, true);
+      mySimpit.setSASMode(AP_RETROGRADE);
+    } else if (potValue >= 310 && potValue < 420) {
+      setLED(LED_PRO_GRADE, true);
+      mySimpit.setSASMode(AP_PROGRADE);
+    } else if (potValue >= 420 && potValue < 507) {
+      setLED(LED_MANAUVER, true);
+      mySimpit.setSASMode(AP_MANEUVER);
+    } else if (potValue >= 507 && potValue < 600) {
+      setLED(LED_STABILITY_ASSIST, true);
+      mySimpit.setSASMode(AP_STABILITYASSIST);
+    } else if (potValue >= 600 && potValue < 690) {
+      setLED(LED_RADIAL_OUT, true);
+      mySimpit.setSASMode(AP_RADIALOUT);
+    } else if (potValue >= 690 && potValue < 790) {
+      setLED(LED_RADIAL_IN, true);
+      mySimpit.setSASMode(AP_RADIALIN);
+    } else if (potValue >= 790 && potValue < 875) {
+      setLED(LED_TARGET, true);
+      mySimpit.setSASMode(AP_TARGET);
+    } else if (potValue >= 875 && potValue < 975) {
+      setLED(LED_ANTI_TARGET, true);
+      mySimpit.setSASMode(AP_ANTITARGET);
+    } else if (potValue >= 975 && potValue < 1024) {
+      setLED(LED_NAVIGATION, true);
+      mySimpit.printToKSP(F("Navigation"), PRINT_TO_SCREEN);
+    }
+
+    // Update shift registers to reflect the changes
+    updateShiftRegisters();
   }
-
-  // Update shift registers to reflect the changes
-  updateShiftRegisters();
 }
+
 
 // Function to clear only the LEDs used in SAS_mode_pot()
 void clearSASModeLEDs() {
@@ -880,3 +940,27 @@ void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
   }
   digitalWrite(myClockPin, LOW);
 }
+
+
+void ALL_LEDS_OFF(){
+  setLED(LED_AUTO_PILOT, false);
+  setLED(LED_ANTI_NORMAL, false);
+  setLED(LED_NORMAL, false);
+  setLED(LED_RETRO_GRADE, false);
+  setLED(LED_PRO_GRADE, false);
+  setLED(LED_MANAUVER, false);
+  setLED(LED_STABILITY_ASSIST, false);
+  setLED(LED_RADIAL_OUT, false);
+  setLED(LED_RADIAL_IN, false);
+  setLED(LED_TARGET, false);
+  setLED(LED_ANTI_TARGET, false);
+  setLED(LED_NAVIGATION, false);
+  setLED(LED_BRAKES, false);
+  setLED(LED_GEARS, false);
+  setLED(LED_RCS, false);
+  digitalWrite(LED_LIGHTS, LOW);
+  digitalWrite(LED_SOLAR, LOW);
+  digitalWrite(LED_RADS, LOW);
+}
+
+
