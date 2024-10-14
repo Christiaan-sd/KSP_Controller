@@ -4,28 +4,30 @@
 #include <SerLCD.h>
 #include <PayloadStructs.h>
 
-
 // Shift register pin configuration
 const int LATCH_PIN = 15;  // Pin connected to ST_CP (Latch Pin) of 74HC595
-const int CLOCK_PIN = 14; // Pin connected to SH_CP (Clock Pin) of 74HC595
-const int DATA_PIN = 16;  // Pin connected to DS (Data Pin) of 74HC595
+const int CLOCK_PIN = 14;  // Pin connected to SH_CP (Clock Pin) of 74HC595
+const int DATA_PIN = 16;   // Pin connected to DS (Data Pin) of 74HC595
 
 // Variables to store LED states
 byte ledStates1 = 0x00;  // LEDs 1-8 (first shift register)
 byte ledStates2 = 0x00;  // LEDs 9-16 (second shift register)
+byte ledStates3 = 0x00;  // LEDs 17-24 (third shift register)
+byte ledStates4 = 0x00;  // LEDs 25-32 (fourth shift register)
 
 // Define each LED with its corresponding bit position in the shift registers
-const int LED_SAS = 0;             // First shift register
+// First shift register
+const int LED_SAS = 0;
 const int LED_AUTO_PILOT = 1;
-const int LED_ANTI_NORMAL = 5;
+const int LED_MANAUVER = 2;
 const int LED_NORMAL = 3;
 const int LED_RETRO_GRADE = 4;
+const int LED_ANTI_NORMAL = 5;
 const int LED_PRO_GRADE = 6;
-const int LED_MANAUVER = 2;
 const int LED_STABILITY_ASSIST = 7;
 
 // Second shift register
-const int LED_RADIAL_OUT = 8;      // Second shift register
+const int LED_RADIAL_OUT = 8;
 const int LED_RADIAL_IN = 9;
 const int LED_TARGET = 10;
 const int LED_ANTI_TARGET = 11;
@@ -34,22 +36,43 @@ const int LED_RCS = 13;
 const int LED_GEARS = 14;
 const int LED_BRAKES = 15;
 
-// LEDS not on shift regiser :)
+// Third shift register (LEDs 17-24)
+const int LED_ROCKET_MODE = 16;
+const int LED_ARM_ABORT = 17;
+const int LED_ACTION_GROUP = 18;
+const int LED_DOCKING_MODE = 19;
+const int LED_EVA_MODE = 20;
+const int LED_PRECISION = 21;
+const int LED_PlANE_MODE = 22;
+const int LED_ROVER_MODE = 23;
+
+// Fourth shift register (LEDs 25-32)
+const int LED_STAGE = 24;
+const int LED_RECOVER = 25;
+const int LED_ATMOS = 26;
+const int LED_LOW_ELECTRICITY = 27;
+const int LED_LOW_FUEL = 28;
+const int LED_TEMPRATURE = 29;
+const int LED_MASTER_ALARM = 30;
+const int LED_OXYGEN = 31;
+
+// LEDs not on shift register
 const int LED_SCIENCE = 23;  // Digital pin 13
-const int LED_RADS = 17;  // Digital pin 17
+const int LED_RADS = 17;     // Digital pin 17
 const int LED_SOLAR = 18;    // Digital pin 0
-const int LED_LIGHTS = 19;    // Digital pin 1
+const int LED_LIGHTS = 19;   // Digital pin 1
 
+// Constants for control pins
+const int THROTTLE_PIN = A0;
+const int PITCH_PIN = A1;
+const int ROLL_PIN = A2;
+const int YAW_PIN = A3;
+const int TRANSLATE_Z_PIN = A4;
+const int TRANSLATE_X_PIN = A5;
+const int TRANSLATE_Y_PIN = A6;
+const int POT_PIN = A7;
 
-// Constants
-const int THROTTLE_PIN = A0;       // the pin used for controlling throttle
-const int PITCH_PIN = A1;          // the pin used for controlling pitch
-const int ROLL_PIN = A2;           // the pin used for controlling roll
-const int YAW_PIN = A3;            // the pin used for controlling yaw
-const int TRANSLATE_X_PIN = A5;    // the pin used for controlling translation X
-const int TRANSLATE_Y_PIN = A6;    // the pin used for controlling translation Y
-const int TRANSLATE_Z_PIN = A4;    // the pin used for controlling translation Z
-const int POT_PIN = A7;        // Potentiometer for changing SAS mode
+// Switches
 const int BRAKE_SWITCH = 6;
 const int GEAR_SWITCH = 7;
 const int RCS_SWITCH = 8;
@@ -58,49 +81,103 @@ const int RADS_SWITCH = 10;
 const int SOLAR_SWITCH = 11;
 const int LIGHTS_SWITCH = 12;
 const int LIGHTS_SWITCH_LED = 13;
+
+// Buttons
+const int LCD_BUTTON_PIN_LEFT = 2;
+const int LCD_BUTTON_PIN_RIGHT = 3;
 const int JOYSTICK_BUTTON_TRANSLATION = 5;
 const int JOYSTICK_BUTTON_ROTATION = 4;
-const int LCD_SWITCH_PIN_LEFT = 2;
-const int LCD_SWITCH_PIN_RIGHT = 3;
 const int SCIENCE_BUTTON_PIN = 24;
+const int STAGE_BUTTON_PIN = 27;
+const int TRIM_BUTTON_PIN = 29;
+const int RESET_TRIM_BUTTON_PIN = 28;
+const int LOAD_BUTTON_PIN = 30;
+const int SAVE_BUTTON_PIN = 31;
+const int SHIPS_BUTTON_PIN = 32;
+const int CAMERA_BUTTON_PIN = 33;
+const int MAP_BUTTON_PIN = 34;
+const int TIMEWARP_MINUS_BUTTON_PIN = 35;
+const int TIMEWARP_PAUSE_BUTTON_PIN = 36;
+const int TIMEWARP_PERIAPSIS_BUTTON_PIN = 37;
+const int TIMEWARP_MANEUVER_BUTTON_PIN = 38;
+const int TIMERWARP_APOAPSIS_BUTTON_PIN = 39;
+const int TIMEWARP_NORMAL_BUTTON_PIN = 40;
+const int TIMEWARP_PLUS_BUTTON_PIN = 41;
+const int ACTION_GROUP_10_BUTTON_PIN = 42;
+const int ACTION_GROUP_9_BUTTON_PIN = 43;
+const int ACTION_GROUP_8_BUTTON_PIN = 44;
+const int ACTION_GROUP_7_BUTTON_PIN = 45;
+const int ACTION_GROUP_6_BUTTON_PIN = 46;
+const int ACTION_GROUP_5_BUTTON_PIN = 47;
+const int ACTION_GROUP_4_BUTTON_PIN = 48;
+const int ACTION_GROUP_3_BUTTON_PIN = 49;
+const int ACTION_GROUP_2_BUTTON_PIN = 50;
+const int ACTION_GROUP_1_BUTTON_PIN = 51;
+const int ABORT_BUTTON_PIN = 52;
+
+// Reading variables for buttons
+int readingTrimButton;
+int readingResetTrimButton;
+int readingLoadButton;
+int readingSaveButton;
+int readingShipsButton;
+int readingCameraButton;
+int readingMapButton;
+int readingTimewarpMinusButton;
+int readingTimewarpPauseButton;
+int readingTimewarpPeriapsisButton;
+int readingTimewarpManeuverButton;
+int readingTimewarpApoapsisButton;
+int readingTimewarpNormalButton;
+int readingTimewarpPlusButton;
+int readingAbortButton;
+int readingActionGroup1Button;
+int readingActionGroup2Button;
+int readingActionGroup3Button;
+int readingActionGroup4Button;
+int readingActionGroup5Button;
+int readingActionGroup6Button;
+int readingActionGroup7Button;
+int readingActionGroup8Button;
+int readingActionGroup9Button;
+int readingActionGroup10Button;
+
+// Timing constants
 const unsigned long DEBOUNCE_DELAY = 50; // Debounce delay in milliseconds
 const unsigned int LCD_UPDATE_INTERVAL = 125;  // LCD update frequency
 const unsigned int SEND_INTERVAL = 1500;
-const int DEADZONE = 20; // Deadzone for joystick inputs
-const int DEADZONE_CAMERA_COMMANDS = 50;  // Deadzone for joystick Camera inputs
-const int SMALL_INCREMENT = 300; // Adjust this camera responsivenes value as needed
 
-// Define key codes for Camera control in KSP
+// Deadzone constants
+const int DEADZONE = 100; // Deadzone for joystick inputs
+const int DEADZONE_CAMERA_COMMANDS = 50;  // Deadzone for joystick Camera inputs
+const int SMALL_INCREMENT = 300; // Adjust this camera responsiveness value as needed
+
+// Key codes for Camera control in KSP
 const int LEFT_KEY = 0x25;   // Left arrow key
 const int RIGHT_KEY = 0x27;  // Right arrow key
 const int PITCH_UP_KEY = 0x26;   // Up arrow key (Zoom In)
 const int PITCH_DOWN_KEY = 0x28; // Down arrow key (Zoom Out)
-const int ZOOM_IN_KEY = 0x21;   // Page Up key (Zoom In)
-const int ZOOM_OUT_KEY = 0x22;  // Page Down key (Zoom Out)
+const int ZOOM_IN_KEY = 0x21;    // Page Up key (Zoom In)
+const int ZOOM_OUT_KEY = 0x22;   // Page Down key (Zoom Out)
+const int LOAD_KEY = 0x78;      // F9 Key for loading
+const int SAVE_KEY = 0x74;      // F5 Key for loading
+const int SHIPS_KEY = 0xDD;     // ] key for cycling ships
 
 // Track whether keys are currently pressed
 bool left_pressed = false, right_pressed = false;
 bool zoom_in_pressed = false, zoom_out_pressed = false;
 bool pitch_up_pressed = false, pitch_down_pressed = false;
 
-    
 // Enum for button states
 enum ButtonState {
   BUTTON_HIGH,
   BUTTON_LOW
 };
 
-
-
-
-bool echoReceived = false;
-
-
 // Global Variables
 KerbalSimpit mySimpit(Serial);
 SerLCD lcd;
 bool isConnected = false;
-
 
 unsigned long lastLCDUpdate = 0;
 
@@ -117,6 +194,32 @@ unsigned long lastDebounceTimeRADSSwitch = 0;
 unsigned long lastDebounceTimeSolarSwitch = 0;
 unsigned long lastDebounceTimeLightsSwitch = 0;
 unsigned long lastDebounceTimeScienceButton = 0;
+unsigned long lastDebounceTimeStageButton = 0;
+unsigned long lastDebounceTimeTrimButton = 0;
+unsigned long lastDebounceTimeResetTrimButton = 0;
+unsigned long lastDebounceTimeLoadButton = 0;
+unsigned long lastDebounceTimeSaveButton = 0;
+unsigned long lastDebounceTimeShipsButton = 0;
+unsigned long lastDebounceTimeCameraButton = 0;
+unsigned long lastDebounceTimeMapButton = 0;
+unsigned long lastDebounceTimeTimewarpMinusButton = 0;
+unsigned long lastDebounceTimeTimewarpPauseButton = 0;
+unsigned long lastDebounceTimeTimewarpPeriapsisButton = 0;
+unsigned long lastDebounceTimeTimewarpManeuverButton = 0;
+unsigned long lastDebounceTimeTimewarpApoapsisButton = 0;
+unsigned long lastDebounceTimeTimewarpNormalButton = 0;
+unsigned long lastDebounceTimeTimewarpPlusButton = 0;
+unsigned long lastDebounceTimeAbortButton = 0;
+unsigned long lastDebounceTimeActionGroup1Button = 0;
+unsigned long lastDebounceTimeActionGroup2Button = 0;
+unsigned long lastDebounceTimeActionGroup3Button = 0;
+unsigned long lastDebounceTimeActionGroup4Button = 0;
+unsigned long lastDebounceTimeActionGroup5Button = 0;
+unsigned long lastDebounceTimeActionGroup6Button = 0;
+unsigned long lastDebounceTimeActionGroup7Button = 0;
+unsigned long lastDebounceTimeActionGroup8Button = 0;
+unsigned long lastDebounceTimeActionGroup9Button = 0;
+unsigned long lastDebounceTimeActionGroup10Button = 0;
 
 // Variables to store the current and previous readings
 int lastSASSwitchState = HIGH;  // Assume switch is not pressed initially
@@ -128,6 +231,32 @@ int lastRADSSwitchState = HIGH;
 int lastSolarSwitchState = HIGH;
 int lastScienceButtonState = HIGH;  // Last stable state of the button
 bool scienceButtonPressed = false;  // Track whether the button is pressed
+int lastStageButtonState = HIGH;
+int lastTrimButtonState = HIGH;
+int lastResetTrimButtonState = HIGH;
+int lastLoadButtonState = HIGH;
+int lastSaveButtonState = HIGH;
+int lastShipsButtonState = HIGH;
+int lastCameraButtonState = HIGH;
+int lastMapButtonState = HIGH;
+int lastTimewarpMinusButtonState = HIGH;
+int lastTimewarpPauseButtonState = HIGH;
+int lastTimewarpPeriapsisButtonState = HIGH;
+int lastTimewarpManeuverButtonState = HIGH;
+int lastTimewarpApoapsisButtonState = HIGH;
+int lastTimewarpNormalButtonState = HIGH;
+int lastTimewarpPlusButtonState = HIGH;
+int lastAbortButtonState = HIGH;
+int lastActionGroup1ButtonState = HIGH;
+int lastActionGroup2ButtonState = HIGH;
+int lastActionGroup3ButtonState = HIGH;
+int lastActionGroup4ButtonState = HIGH;
+int lastActionGroup5ButtonState = HIGH;
+int lastActionGroup6ButtonState = HIGH;
+int lastActionGroup7ButtonState = HIGH;
+int lastActionGroup8ButtonState = HIGH;
+int lastActionGroup9ButtonState = HIGH;
+int lastActionGroup10ButtonState = HIGH;
 
 int lastpotvalue = 0;
 int lcdScreenCase = 0;
@@ -136,8 +265,8 @@ bool lcdAlarmState = false;
 bool lcdAlarmStateOverride = false;
 
 bool translationButtonPressed = false;
-// Global variable declarations
 
+// Global variable declarations
 airspeedMessage myAirspeed;
 deltaVMessage myDeltaV;
 altitudeMessage myAltitude;
@@ -158,6 +287,7 @@ byte deltaChar[8] = {
   0b00000,
   0b00000
 };
+
 
 // Function Prototypes
 void connectToKSP();
@@ -185,11 +315,37 @@ void setup() {
   Wire.setClock(400000); // Optional - set I2C SCL to High Speed Mode of 400kHz
   
   // Set pin modes
-  pinMode(LCD_SWITCH_PIN_RIGHT, INPUT_PULLUP);
-  pinMode(LCD_SWITCH_PIN_LEFT, INPUT_PULLUP);
+  pinMode(LCD_BUTTON_PIN_RIGHT, INPUT_PULLUP);
+  pinMode(LCD_BUTTON_PIN_LEFT, INPUT_PULLUP);
   pinMode(SCIENCE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(STAGE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TRIM_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(RESET_TRIM_BUTTON_PIN, INPUT_PULLUP);
   pinMode(JOYSTICK_BUTTON_TRANSLATION, INPUT_PULLUP);
   pinMode(JOYSTICK_BUTTON_ROTATION, INPUT_PULLUP);
+  pinMode(LOAD_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SAVE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SHIPS_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(CAMERA_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(MAP_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TIMEWARP_MINUS_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TIMEWARP_PAUSE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TIMEWARP_PERIAPSIS_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TIMEWARP_MANEUVER_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TIMERWARP_APOAPSIS_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TIMEWARP_NORMAL_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(TIMEWARP_PLUS_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_10_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_9_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_8_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_7_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_6_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_5_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_4_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_3_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_2_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ACTION_GROUP_1_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(ABORT_BUTTON_PIN, INPUT_PULLUP);
   pinMode(BRAKE_SWITCH, INPUT_PULLUP);
   pinMode(GEAR_SWITCH, INPUT_PULLUP);
   pinMode(RCS_SWITCH, INPUT_PULLUP);
@@ -465,9 +621,12 @@ void handleJoystickButtons(unsigned long now) {
 
 void handleButtons(unsigned long now) {
   int readingScienceButton = digitalRead(SCIENCE_BUTTON_PIN);
+  int readingStageButton = digitalRead(STAGE_BUTTON_PIN);
+  int readingTrimButton = digitalRead(TRIM_BUTTON_PIN);
+  int readingResetTrimButton = digitalRead(RESET_TRIM_BUTTON_PIN);
 
-//--------------------
-  // Check for state change and debounce
+  //--------------------
+  // Check for state change and debounce for Science button
   if (readingScienceButton != lastScienceButtonState && (now - lastDebounceTimeScienceButton) > DEBOUNCE_DELAY) {
     if (readingScienceButton == LOW) {
       scienceButtonPressed = !scienceButtonPressed;
@@ -475,17 +634,295 @@ void handleButtons(unsigned long now) {
       digitalWrite(LED_SCIENCE, scienceButtonPressed ? HIGH : LOW);
     }
     lastDebounceTimeScienceButton = now;
+    updateShiftRegisters();
   }
   lastScienceButtonState = readingScienceButton;
-//--------------------
+  //--------------------
 
-updateShiftRegisters();
+  //--------------------
+  // Check for state change and debounce for Stage button
+  if (readingStageButton != lastStageButtonState && (now - lastDebounceTimeStageButton) > DEBOUNCE_DELAY) {
+    if (readingStageButton == LOW) {
+      mySimpit.printToKSP("Stage button pressed", PRINT_TO_SCREEN);
+      mySimpit.activateAction(STAGE_ACTION);
+    }
+    lastDebounceTimeStageButton = now;
+  }
+  lastStageButtonState = readingStageButton;
+  //--------------------
+
+  //--------------------
+  // Trim button debouncing logic
+  readingTrimButton = digitalRead(TRIM_BUTTON_PIN);
+  if (readingTrimButton != lastTrimButtonState && (now - lastDebounceTimeTrimButton) > DEBOUNCE_DELAY) {
+    if (readingTrimButton == LOW) {
+      mySimpit.printToKSP("Trim button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeTrimButton = now;
+  }
+  lastTrimButtonState = readingTrimButton;
+
+  // Reset Trim button debouncing logic
+  readingResetTrimButton = digitalRead(RESET_TRIM_BUTTON_PIN);
+  if (readingResetTrimButton != lastResetTrimButtonState && (now - lastDebounceTimeResetTrimButton) > DEBOUNCE_DELAY) {
+    if (readingResetTrimButton == LOW) {
+      mySimpit.printToKSP("ResetTrim button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeResetTrimButton = now;
+  }
+  lastResetTrimButtonState = readingResetTrimButton;
+
+  // Load button debouncing logic
+  readingLoadButton = digitalRead(LOAD_BUTTON_PIN);
+  if (readingLoadButton != lastLoadButtonState && (now - lastDebounceTimeLoadButton) > DEBOUNCE_DELAY) {
+    if (readingLoadButton == LOW) {
+      mySimpit.printToKSP("Load button pressed", PRINT_TO_SCREEN);
+      keyboardEmulatorMessage loadMsg(LOAD_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, loadMsg);
+    }
+    keyboardEmulatorMessage loadMsg(LOAD_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, loadMsg);
+    lastDebounceTimeLoadButton = now;
+  }
+  lastLoadButtonState = readingLoadButton;
+
+  // Save button debouncing logic
+  readingSaveButton = digitalRead(SAVE_BUTTON_PIN);
+  if (readingSaveButton != lastSaveButtonState && (now - lastDebounceTimeSaveButton) > DEBOUNCE_DELAY) {
+    if (readingSaveButton == LOW) {
+      mySimpit.printToKSP("Save button pressed", PRINT_TO_SCREEN);
+      keyboardEmulatorMessage SaveMsg(SAVE_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, SaveMsg);
+    }
+    keyboardEmulatorMessage SaveMsg(SAVE_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, SaveMsg);
+    lastDebounceTimeSaveButton = now;
+  }
+  lastSaveButtonState = readingSaveButton;
+
+  // Ships button debouncing logic
+  readingShipsButton = digitalRead(SHIPS_BUTTON_PIN);
+  if (readingShipsButton != lastShipsButtonState && (now - lastDebounceTimeShipsButton) > DEBOUNCE_DELAY) {
+    if (readingShipsButton == LOW) {
+      mySimpit.printToKSP("Ships button pressed", PRINT_TO_SCREEN);
+      keyboardEmulatorMessage ShipsMsg(SHIPS_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, ShipsMsg);
+    }
+    lastDebounceTimeShipsButton = now;
+    keyboardEmulatorMessage ShipsMsg(SHIPS_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, ShipsMsg);
+  }
+  lastShipsButtonState = readingShipsButton;
+
+  // Camera button debouncing logic
+  readingCameraButton = digitalRead(CAMERA_BUTTON_PIN);
+  if (readingCameraButton != lastCameraButtonState && (now - lastDebounceTimeCameraButton) > DEBOUNCE_DELAY) {
+    if (readingCameraButton == LOW) {
+      mySimpit.printToKSP("Camera button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeCameraButton = now;
+  }
+  lastCameraButtonState = readingCameraButton;
+
+  // Map button debouncing logic
+  readingMapButton = digitalRead(MAP_BUTTON_PIN);
+  if (readingMapButton != lastMapButtonState && (now - lastDebounceTimeMapButton) > DEBOUNCE_DELAY) {
+    if (readingMapButton == LOW) {
+      mySimpit.printToKSP("Map button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeMapButton = now;
+  }
+  lastMapButtonState = readingMapButton;
+
+  // Timewarp Minus button debouncing logic
+  readingTimewarpMinusButton = digitalRead(TIMEWARP_MINUS_BUTTON_PIN);
+  if (readingTimewarpMinusButton != lastTimewarpMinusButtonState && (now - lastDebounceTimeTimewarpMinusButton) > DEBOUNCE_DELAY) {
+    if (readingTimewarpMinusButton == LOW) {
+      mySimpit.printToKSP("Timewarp Minus button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeTimewarpMinusButton = now;
+  }
+  lastTimewarpMinusButtonState = readingTimewarpMinusButton;
+
+  // Timewarp Pause button debouncing logic
+  readingTimewarpPauseButton = digitalRead(TIMEWARP_PAUSE_BUTTON_PIN);
+  if (readingTimewarpPauseButton != lastTimewarpPauseButtonState && (now - lastDebounceTimeTimewarpPauseButton) > DEBOUNCE_DELAY) {
+    if (readingTimewarpPauseButton == LOW) {
+      mySimpit.printToKSP("Timewarp Pause button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeTimewarpPauseButton = now;
+  }
+  lastTimewarpPauseButtonState = readingTimewarpPauseButton;
+
+  // Timewarp Periapsis button debouncing logic
+  readingTimewarpPeriapsisButton = digitalRead(TIMEWARP_PERIAPSIS_BUTTON_PIN);
+  if (readingTimewarpPeriapsisButton != lastTimewarpPeriapsisButtonState && (now - lastDebounceTimeTimewarpPeriapsisButton) > DEBOUNCE_DELAY) {
+    if (readingTimewarpPeriapsisButton == LOW) {
+      mySimpit.printToKSP("Timewarp Periapsis button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeTimewarpPeriapsisButton = now;
+  }
+  lastTimewarpPeriapsisButtonState = readingTimewarpPeriapsisButton;
+
+  // Timewarp Maneuver button debouncing logic
+  readingTimewarpManeuverButton = digitalRead(TIMEWARP_MANEUVER_BUTTON_PIN);
+  if (readingTimewarpManeuverButton != lastTimewarpManeuverButtonState && (now - lastDebounceTimeTimewarpManeuverButton) > DEBOUNCE_DELAY) {
+    if (readingTimewarpManeuverButton == LOW) {
+      mySimpit.printToKSP("Timewarp Maneuver button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeTimewarpManeuverButton = now;
+  }
+  lastTimewarpManeuverButtonState = readingTimewarpManeuverButton;
+
+  // Timewarp Apoapsis button debouncing logic
+  readingTimewarpApoapsisButton = digitalRead(TIMERWARP_APOAPSIS_BUTTON_PIN);
+  if (readingTimewarpApoapsisButton != lastTimewarpApoapsisButtonState && (now - lastDebounceTimeTimewarpApoapsisButton) > DEBOUNCE_DELAY) {
+    if (readingTimewarpApoapsisButton == LOW) {
+      mySimpit.printToKSP("Timewarp Apoapsis button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeTimewarpApoapsisButton = now;
+  }
+  lastTimewarpApoapsisButtonState = readingTimewarpApoapsisButton;
+
+  // Timewarp Normal button debouncing logic
+  readingTimewarpNormalButton = digitalRead(TIMEWARP_NORMAL_BUTTON_PIN);
+  if (readingTimewarpNormalButton != lastTimewarpNormalButtonState && (now - lastDebounceTimeTimewarpNormalButton) > DEBOUNCE_DELAY) {
+    if (readingTimewarpNormalButton == LOW) {
+      mySimpit.printToKSP("Timewarp Normal button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeTimewarpNormalButton = now;
+  }
+  lastTimewarpNormalButtonState = readingTimewarpNormalButton;
+
+  // Timewarp Plus button debouncing logic
+  readingTimewarpPlusButton = digitalRead(TIMEWARP_PLUS_BUTTON_PIN);
+  if (readingTimewarpPlusButton != lastTimewarpPlusButtonState && (now - lastDebounceTimeTimewarpPlusButton) > DEBOUNCE_DELAY) {
+    if (readingTimewarpPlusButton == LOW) {
+      mySimpit.printToKSP("Timewarp Plus button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeTimewarpPlusButton = now;
+  }
+  lastTimewarpPlusButtonState = readingTimewarpPlusButton;
+
+  // Action Group 1 button debouncing logic
+  readingActionGroup1Button = digitalRead(ACTION_GROUP_1_BUTTON_PIN);
+  if (readingActionGroup1Button != lastActionGroup1ButtonState && (now - lastDebounceTimeActionGroup1Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup1Button == LOW) {
+      mySimpit.printToKSP("Action Group 1 button pressed", PRINT_TO_SCREEN);
+      ALL_LEDS_ON();
+    }
+    lastDebounceTimeActionGroup1Button = now;
+  }
+  lastActionGroup1ButtonState = readingActionGroup1Button;
+
+  // Action Group 2 button debouncing logic
+  readingActionGroup2Button = digitalRead(ACTION_GROUP_2_BUTTON_PIN);
+  if (readingActionGroup2Button != lastActionGroup2ButtonState && (now - lastDebounceTimeActionGroup2Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup2Button == LOW) {
+      mySimpit.printToKSP("Action Group 2 button pressed", PRINT_TO_SCREEN);
+      ALL_LEDS_OFF();
+    }
+    lastDebounceTimeActionGroup2Button = now;
+  }
+  lastActionGroup2ButtonState = readingActionGroup2Button;
+
+  // Action Group 3 button debouncing logic
+  readingActionGroup3Button = digitalRead(ACTION_GROUP_3_BUTTON_PIN);
+  if (readingActionGroup3Button != lastActionGroup3ButtonState && (now - lastDebounceTimeActionGroup3Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup3Button == LOW) {
+      mySimpit.printToKSP("Action Group 3 button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeActionGroup3Button = now;
+  }
+  lastActionGroup3ButtonState = readingActionGroup3Button;
+
+  // Action Group 4 button debouncing logic
+  readingActionGroup4Button = digitalRead(ACTION_GROUP_4_BUTTON_PIN);
+  if (readingActionGroup4Button != lastActionGroup4ButtonState && (now - lastDebounceTimeActionGroup4Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup4Button == LOW) {
+      mySimpit.printToKSP("Action Group 4 button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeActionGroup4Button = now;
+  }
+  lastActionGroup4ButtonState = readingActionGroup4Button;
+
+  // Action Group 5 button debouncing logic
+  readingActionGroup5Button = digitalRead(ACTION_GROUP_5_BUTTON_PIN);
+  if (readingActionGroup5Button != lastActionGroup5ButtonState && (now - lastDebounceTimeActionGroup5Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup5Button == LOW) {
+      mySimpit.printToKSP("Action Group 5 button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeActionGroup5Button = now;
+  }
+  lastActionGroup5ButtonState = readingActionGroup5Button;
+
+  // Action Group 6 button debouncing logic
+  readingActionGroup6Button = digitalRead(ACTION_GROUP_6_BUTTON_PIN);
+  if (readingActionGroup6Button != lastActionGroup6ButtonState && (now - lastDebounceTimeActionGroup6Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup6Button == LOW) {
+      mySimpit.printToKSP("Action Group 6 button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeActionGroup6Button = now;
+  }
+  lastActionGroup6ButtonState = readingActionGroup6Button;
+
+  // Action Group 7 button debouncing logic
+  readingActionGroup7Button = digitalRead(ACTION_GROUP_7_BUTTON_PIN);
+  if (readingActionGroup7Button != lastActionGroup7ButtonState && (now - lastDebounceTimeActionGroup7Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup7Button == LOW) {
+      mySimpit.printToKSP("Action Group 7 button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeActionGroup7Button = now;
+  }
+  lastActionGroup7ButtonState = readingActionGroup7Button;
+
+  // Action Group 8 button debouncing logic
+  readingActionGroup8Button = digitalRead(ACTION_GROUP_8_BUTTON_PIN);
+  if (readingActionGroup8Button != lastActionGroup8ButtonState && (now - lastDebounceTimeActionGroup8Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup8Button == LOW) {
+      mySimpit.printToKSP("Action Group 8 button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeActionGroup8Button = now;
+  }
+  lastActionGroup8ButtonState = readingActionGroup8Button;
+
+  // Action Group 9 button debouncing logic
+  readingActionGroup9Button = digitalRead(ACTION_GROUP_9_BUTTON_PIN);
+  if (readingActionGroup9Button != lastActionGroup9ButtonState && (now - lastDebounceTimeActionGroup9Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup9Button == LOW) {
+      mySimpit.printToKSP("Action Group 9 button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeActionGroup9Button = now;
+  }
+  lastActionGroup9ButtonState = readingActionGroup9Button;
+
+  // Action Group 10 button debouncing logic
+  readingActionGroup10Button = digitalRead(ACTION_GROUP_10_BUTTON_PIN);
+  if (readingActionGroup10Button != lastActionGroup10ButtonState && (now - lastDebounceTimeActionGroup10Button) > DEBOUNCE_DELAY) {
+    if (readingActionGroup10Button == LOW) {
+      mySimpit.printToKSP("Action Group 10 button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeActionGroup10Button = now;
+  }
+  lastActionGroup10ButtonState = readingActionGroup10Button;
+
+  // Abort button debouncing logic
+  readingAbortButton = digitalRead(ABORT_BUTTON_PIN);
+  if (readingAbortButton != lastAbortButtonState && (now - lastDebounceTimeAbortButton) > DEBOUNCE_DELAY) {
+    if (readingAbortButton == LOW) {
+      mySimpit.printToKSP("Abort button pressed", PRINT_TO_SCREEN);
+    }
+    lastDebounceTimeAbortButton = now;
+  }
+  lastAbortButtonState = readingAbortButton;
 }
+
+
 
 // Function to handle LCD buttons with debouncing
 void handleLCDButtons(unsigned long now) {
-  int readingLCDSwitchPinRight = digitalRead(LCD_SWITCH_PIN_RIGHT);
-  int readingLCDSwitchPinLeft = digitalRead(LCD_SWITCH_PIN_LEFT);
+  int readingLCDSwitchPinRight = digitalRead(LCD_BUTTON_PIN_RIGHT);
+  int readingLCDSwitchPinLeft = digitalRead(LCD_BUTTON_PIN_LEFT);
 
   // Handle the right button
   if (readingLCDSwitchPinRight == LOW && (now - lastDebounceTimeRight) > DEBOUNCE_DELAY) {
@@ -496,9 +933,12 @@ void handleLCDButtons(unsigned long now) {
       if (lcdAlarmState) {
         lcdAlarmStateOverride = false;
         lcdAlarmState = false;
+        setLED(LED_MASTER_ALARM, false);
+        setLED(LED_TEMPRATURE, false);
         lcdScreenCase = 0;
         lcd.clear();
         lcd.setBacklight(255, 255, 255);
+        updateShiftRegisters();
       }
     }
     lastDebounceTimeRight = now;
@@ -513,9 +953,12 @@ void handleLCDButtons(unsigned long now) {
       if (lcdAlarmState) {
         lcdAlarmStateOverride = true;
         lcdAlarmState = false;
+        setLED(LED_MASTER_ALARM, false);
+        setLED(LED_TEMPRATURE, false);
         lcdScreenCase = 0;
         lcd.clear();
         lcd.setBacklight(255, 255, 255);
+        updateShiftRegisters();
       }
     }
     lastDebounceTimeLeft = now;
@@ -529,6 +972,9 @@ void handleTempAlarm() {
       lcdScreenCaseBeforeAlarm = lcdScreenCase; // Save the current state before alarm
       lcdScreenCase = 98;
       lcdAlarmState = true;
+      setLED(LED_MASTER_ALARM, true);
+      setLED(LED_TEMPRATURE, true);
+      updateShiftRegisters();
       lcd.setBacklight(255, 0, 0);
       lcd.clear();
     }
@@ -536,7 +982,10 @@ void handleTempAlarm() {
     if (lcdAlarmState) {
       lcdAlarmState = false;
       lcdAlarmStateOverride = false;
-      lcdScreenCase = lcdScreenCaseBeforeAlarm;
+      lcdScreenCase = lcdScreenCaseBeforeAlarm;\
+      setLED(LED_MASTER_ALARM, false);
+      setLED(LED_TEMPRATURE, false);
+      updateShiftRegisters();
       lcd.setBacklight(255, 255, 255);
       lcd.clear();
     }
@@ -913,12 +1362,26 @@ void setLED(int led, bool state) {
     } else {
       ledStates1 &= ~(1 << led);  // Set bit to 0 (turn off)
     }
-  } else {        // Second shift register (LEDs 8-15)
+  } else if (led < 16) {  // Second shift register (LEDs 8-15)
     int shiftRegisterLED = led - 8;
     if (state) {
       ledStates2 |= (1 << shiftRegisterLED);  // Set bit to 1 (turn on)
     } else {
       ledStates2 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
+    }
+  } else if (led < 24) {  // Third shift register (LEDs 16-23)
+    int shiftRegisterLED = led - 16;
+    if (state) {
+      ledStates3 |= (1 << shiftRegisterLED);  // Set bit to 1 (turn on)
+    } else {
+      ledStates3 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
+    }
+  } else {  // Fourth shift register (LEDs 24-31)
+    int shiftRegisterLED = led - 24;
+    if (state) {
+      ledStates4 |= (1 << shiftRegisterLED);  // Set bit to 1 (turn on)
+    } else {
+      ledStates4 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
     }
   }
 }
@@ -926,6 +1389,8 @@ void setLED(int led, bool state) {
 // Function to update the shift registers with current LED states
 void updateShiftRegisters() {
   digitalWrite(LATCH_PIN, LOW);         // Prepare to send data
+  shiftOut(DATA_PIN, CLOCK_PIN, ledStates4);  // Send data for SR4 (LEDs 25-32)
+  shiftOut(DATA_PIN, CLOCK_PIN, ledStates3);  // Send data for SR3 (LEDs 17-24)
   shiftOut(DATA_PIN, CLOCK_PIN, ledStates2);  // Send data for SR2 (LEDs 9-16)
   shiftOut(DATA_PIN, CLOCK_PIN, ledStates1);  // Send data for SR1 (LEDs 1-8)
   digitalWrite(LATCH_PIN, HIGH);        // Latch the data (output to LEDs)
@@ -942,25 +1407,43 @@ void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
 }
 
 
-void ALL_LEDS_OFF(){
-  setLED(LED_AUTO_PILOT, false);
-  setLED(LED_ANTI_NORMAL, false);
-  setLED(LED_NORMAL, false);
-  setLED(LED_RETRO_GRADE, false);
-  setLED(LED_PRO_GRADE, false);
-  setLED(LED_MANAUVER, false);
-  setLED(LED_STABILITY_ASSIST, false);
-  setLED(LED_RADIAL_OUT, false);
-  setLED(LED_RADIAL_IN, false);
-  setLED(LED_TARGET, false);
-  setLED(LED_ANTI_TARGET, false);
-  setLED(LED_NAVIGATION, false);
-  setLED(LED_BRAKES, false);
-  setLED(LED_GEARS, false);
-  setLED(LED_RCS, false);
+
+
+// Function to enable all LEDs in all four shift registers (LEDs 1-32)
+void ALL_LEDS_ON() {
+  // Set all bits to 1 in all shift register variables
+  ledStates1 = 0xFF;  // All LEDs in the first shift register (LEDs 1-8) ON
+  ledStates2 = 0xFF;  // All LEDs in the second shift register (LEDs 9-16) ON
+  ledStates3 = 0xFF;  // All LEDs in the third shift register (LEDs 17-24) ON
+  ledStates4 = 0xFF;  // All LEDs in the fourth shift register (LEDs 25-32) ON
+
+  // Turn on non-shift-register LEDs
+  digitalWrite(LED_LIGHTS, HIGH);
+  digitalWrite(LED_SOLAR, HIGH);
+  digitalWrite(LED_RADS, HIGH);
+  digitalWrite(LED_SCIENCE, HIGH);
+  // Update shift registers to apply the changes
+  updateShiftRegisters();
+}
+
+// Function to turn off all LEDs in all four shift registers (LEDs 1-32)
+// and the non-shift-register LEDs
+void ALL_LEDS_OFF() {
+  // Set all bits to 0 in all shift register variables
+  ledStates1 = 0x00;  // All LEDs in the first shift register (LEDs 1-8) OFF
+  ledStates2 = 0x00;  // All LEDs in the second shift register (LEDs 9-16) OFF
+  ledStates3 = 0x00;  // All LEDs in the third shift register (LEDs 17-24) OFF
+  ledStates4 = 0x00;  // All LEDs in the fourth shift register (LEDs 25-32) OFF
+
+  
   digitalWrite(LED_LIGHTS, LOW);
   digitalWrite(LED_SOLAR, LOW);
   digitalWrite(LED_RADS, LOW);
+  digitalWrite(LED_SCIENCE, LOW);
+
+  // Update shift registers to apply the changes
+  updateShiftRegisters();
 }
+
 
 
