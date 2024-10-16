@@ -81,6 +81,8 @@ const int RADS_SWITCH = 10;
 const int SOLAR_SWITCH = 11;
 const int LIGHTS_SWITCH = 12;
 const int LIGHTS_SWITCH_LED = 13;
+const int STAGE_ARM_SWITCH = 25;
+const int ABORT_ARM_SWITCH = 53;
 
 // Buttons
 const int LCD_BUTTON_PIN_LEFT = 2;
@@ -193,6 +195,8 @@ unsigned long lastDebounceTimeSASSwitch = 0;
 unsigned long lastDebounceTimeRADSSwitch = 0;
 unsigned long lastDebounceTimeSolarSwitch = 0;
 unsigned long lastDebounceTimeLightsSwitch = 0;
+unsigned long lastDebounceTimeStageArmSwitch = 0;
+unsigned long lastDebounceTimeAbortArmSwitch = 0;
 unsigned long lastDebounceTimeScienceButton = 0;
 unsigned long lastDebounceTimeStageButton = 0;
 unsigned long lastDebounceTimeTrimButton = 0;
@@ -224,6 +228,8 @@ unsigned long lastDebounceTimeActionGroup10Button = 0;
 // Variables to store the current and previous readings
 int lastSASSwitchState = HIGH;  // Assume switch is not pressed initially
 int lastLightsSwitchState = HIGH;  // Assume switch is not pressed initially
+int lastStageArmSwitchState = HIGH;
+int lastAbortArmSwitchState = HIGH;
 int lastGearSwitchState = HIGH;
 int lastBrakeSwitchState = HIGH;
 int lastRCSSwitchState = HIGH;
@@ -231,6 +237,8 @@ int lastRADSSwitchState = HIGH;
 int lastSolarSwitchState = HIGH;
 int lastScienceButtonState = HIGH;  // Last stable state of the button
 bool scienceButtonPressed = false;  // Track whether the button is pressed
+bool StageArmend = false;
+bool AbortArmend = false;
 int lastStageButtonState = HIGH;
 int lastTrimButtonState = HIGH;
 int lastResetTrimButtonState = HIGH;
@@ -353,6 +361,8 @@ void setup() {
   pinMode(RADS_SWITCH, INPUT_PULLUP);
   pinMode(SOLAR_SWITCH, INPUT_PULLUP);
   pinMode(LIGHTS_SWITCH, INPUT_PULLUP);
+  pinMode(STAGE_ARM_SWITCH, INPUT_PULLUP);
+  pinMode(ABORT_ARM_SWITCH, INPUT_PULLUP);  
   pinMode(LIGHTS_SWITCH_LED, OUTPUT);
   pinMode(POT_PIN, INPUT);
   pinMode(LATCH_PIN, OUTPUT);
@@ -366,6 +376,8 @@ void setup() {
     // Read initial state of switches
   lastSASSwitchState = digitalRead(SAS_SWITCH);
   lastLightsSwitchState = digitalRead(LIGHTS_SWITCH);
+  lastStageArmSwitchState = digitalRead(STAGE_ARM_SWITCH);
+  lastAbortArmSwitchState = digitalRead(ABORT_ARM_SWITCH);
   lastGearSwitchState = digitalRead(GEAR_SWITCH);
   lastBrakeSwitchState = digitalRead(BRAKE_SWITCH);
   lastRCSSwitchState = digitalRead(RCS_SWITCH);
@@ -451,6 +463,8 @@ void handleSwitches(unsigned long now) {
   int readingRADSSwitch = digitalRead(RADS_SWITCH);
   int readingSolarSwitch = digitalRead(SOLAR_SWITCH);
   int readingLightsSwitch = digitalRead(LIGHTS_SWITCH);
+  int readingStageArmSwitch = digitalRead(STAGE_ARM_SWITCH);
+  int readingAbortArmSwitch = digitalRead(ABORT_ARM_SWITCH);
 
   // Handle SOLAR Switch
   if (readingSolarSwitch != lastSolarSwitchState && (now - lastDebounceTimeSolarSwitch) > DEBOUNCE_DELAY) {
@@ -591,7 +605,45 @@ void handleSwitches(unsigned long now) {
     // Update the last state
     lastLightsSwitchState = readingLightsSwitch;
   }
-  updateShiftRegisters();
+
+ // Handle the STAGE ARM Switch with LED
+  if (readingStageArmSwitch != lastStageArmSwitchState && (now - lastDebounceTimeStageArmSwitch) > DEBOUNCE_DELAY) {
+    lastDebounceTimeStageArmSwitch = now;
+
+    if (readingStageArmSwitch == LOW) {  // Button pressed
+      
+      setLED(LED_STAGE, true);
+      StageArmend = true;
+
+    } else {  // Button released
+      
+      StageArmend = false;
+      setLED(LED_STAGE, false);
+    }
+
+    // Update the last state
+    lastStageArmSwitchState = readingStageArmSwitch;
+  }
+
+// Handle the Abort ARM Switch with LED
+  if (readingAbortArmSwitch != lastAbortArmSwitchState && (now - lastDebounceTimeAbortArmSwitch) > DEBOUNCE_DELAY) {
+    lastDebounceTimeAbortArmSwitch = now;
+
+    if (readingAbortArmSwitch == LOW) {  // Button pressed
+      
+      setLED(LED_ARM_ABORT, true);
+      AbortArmend = true;
+
+    } else {  // Button released
+      
+      AbortArmend = false;
+      setLED(LED_ARM_ABORT, false);
+    }
+
+    // Update the last state
+    lastAbortArmSwitchState = readingAbortArmSwitch;
+  }
+
 }
 
 // Function to handle joystick buttons with debouncing
@@ -614,7 +666,9 @@ void handleJoystickButtons(unsigned long now) {
 
       // Handle the rotation button (inverted logic for pull-up)
       if (readingJoystickButtonRotation == LOW && (now - lastDebounceTimeJoystickRotation) > DEBOUNCE_DELAY) {
+        if (StageArmend == true) {
         mySimpit.activateAction(STAGE_ACTION);
+        }
         lastDebounceTimeJoystickRotation = now;
       }
 }
@@ -634,7 +688,6 @@ void handleButtons(unsigned long now) {
       digitalWrite(LED_SCIENCE, scienceButtonPressed ? HIGH : LOW);
     }
     lastDebounceTimeScienceButton = now;
-    updateShiftRegisters();
   }
   lastScienceButtonState = readingScienceButton;
   //--------------------
@@ -643,8 +696,11 @@ void handleButtons(unsigned long now) {
   // Check for state change and debounce for Stage button
   if (readingStageButton != lastStageButtonState && (now - lastDebounceTimeStageButton) > DEBOUNCE_DELAY) {
     if (readingStageButton == LOW) {
-      mySimpit.printToKSP("Stage button pressed", PRINT_TO_SCREEN);
-      mySimpit.activateAction(STAGE_ACTION);
+      
+        if (StageArmend == true) {
+        mySimpit.activateAction(STAGE_ACTION);
+        mySimpit.printToKSP("Stage button pressed", PRINT_TO_SCREEN);
+        }
     }
     lastDebounceTimeStageButton = now;
   }
@@ -809,7 +865,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup1Button != lastActionGroup1ButtonState && (now - lastDebounceTimeActionGroup1Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup1Button == LOW) {
       mySimpit.printToKSP("Action Group 1 button pressed", PRINT_TO_SCREEN);
-      ALL_LEDS_ON();
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup1Button = now;
   }
@@ -820,7 +876,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup2Button != lastActionGroup2ButtonState && (now - lastDebounceTimeActionGroup2Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup2Button == LOW) {
       mySimpit.printToKSP("Action Group 2 button pressed", PRINT_TO_SCREEN);
-      ALL_LEDS_OFF();
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup2Button = now;
   }
@@ -831,6 +887,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup3Button != lastActionGroup3ButtonState && (now - lastDebounceTimeActionGroup3Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup3Button == LOW) {
       mySimpit.printToKSP("Action Group 3 button pressed", PRINT_TO_SCREEN);
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup3Button = now;
   }
@@ -841,6 +898,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup4Button != lastActionGroup4ButtonState && (now - lastDebounceTimeActionGroup4Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup4Button == LOW) {
       mySimpit.printToKSP("Action Group 4 button pressed", PRINT_TO_SCREEN);
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup4Button = now;
   }
@@ -851,6 +909,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup5Button != lastActionGroup5ButtonState && (now - lastDebounceTimeActionGroup5Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup5Button == LOW) {
       mySimpit.printToKSP("Action Group 5 button pressed", PRINT_TO_SCREEN);
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup5Button = now;
   }
@@ -861,6 +920,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup6Button != lastActionGroup6ButtonState && (now - lastDebounceTimeActionGroup6Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup6Button == LOW) {
       mySimpit.printToKSP("Action Group 6 button pressed", PRINT_TO_SCREEN);
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup6Button = now;
   }
@@ -871,6 +931,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup7Button != lastActionGroup7ButtonState && (now - lastDebounceTimeActionGroup7Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup7Button == LOW) {
       mySimpit.printToKSP("Action Group 7 button pressed", PRINT_TO_SCREEN);
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup7Button = now;
   }
@@ -881,6 +942,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup8Button != lastActionGroup8ButtonState && (now - lastDebounceTimeActionGroup8Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup8Button == LOW) {
       mySimpit.printToKSP("Action Group 8 button pressed", PRINT_TO_SCREEN);
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup8Button = now;
   }
@@ -891,6 +953,7 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup9Button != lastActionGroup9ButtonState && (now - lastDebounceTimeActionGroup9Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup9Button == LOW) {
       mySimpit.printToKSP("Action Group 9 button pressed", PRINT_TO_SCREEN);
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup9Button = now;
   }
@@ -901,16 +964,22 @@ void handleButtons(unsigned long now) {
   if (readingActionGroup10Button != lastActionGroup10ButtonState && (now - lastDebounceTimeActionGroup10Button) > DEBOUNCE_DELAY) {
     if (readingActionGroup10Button == LOW) {
       mySimpit.printToKSP("Action Group 10 button pressed", PRINT_TO_SCREEN);
+      setLED(LED_ACTION_GROUP, true);
     }
     lastDebounceTimeActionGroup10Button = now;
   }
   lastActionGroup10ButtonState = readingActionGroup10Button;
-
+  setLED(LED_ACTION_GROUP, false);
   // Abort button debouncing logic
   readingAbortButton = digitalRead(ABORT_BUTTON_PIN);
   if (readingAbortButton != lastAbortButtonState && (now - lastDebounceTimeAbortButton) > DEBOUNCE_DELAY) {
     if (readingAbortButton == LOW) {
+      
+      if (AbortArmend == true) {
       mySimpit.printToKSP("Abort button pressed", PRINT_TO_SCREEN);
+      mySimpit.activateAction(ABORT_ACTION);
+      }
+      
     }
     lastDebounceTimeAbortButton = now;
   }
@@ -938,7 +1007,6 @@ void handleLCDButtons(unsigned long now) {
         lcdScreenCase = 0;
         lcd.clear();
         lcd.setBacklight(255, 255, 255);
-        updateShiftRegisters();
       }
     }
     lastDebounceTimeRight = now;
@@ -958,7 +1026,6 @@ void handleLCDButtons(unsigned long now) {
         lcdScreenCase = 0;
         lcd.clear();
         lcd.setBacklight(255, 255, 255);
-        updateShiftRegisters();
       }
     }
     lastDebounceTimeLeft = now;
@@ -974,7 +1041,6 @@ void handleTempAlarm() {
       lcdAlarmState = true;
       setLED(LED_MASTER_ALARM, true);
       setLED(LED_TEMPRATURE, true);
-      updateShiftRegisters();
       lcd.setBacklight(255, 0, 0);
       lcd.clear();
     }
@@ -985,7 +1051,6 @@ void handleTempAlarm() {
       lcdScreenCase = lcdScreenCaseBeforeAlarm;\
       setLED(LED_MASTER_ALARM, false);
       setLED(LED_TEMPRATURE, false);
-      updateShiftRegisters();
       lcd.setBacklight(255, 255, 255);
       lcd.clear();
     }
@@ -1331,9 +1396,6 @@ void SAS_mode_pot() {
       setLED(LED_NAVIGATION, true);
       mySimpit.printToKSP(F("Navigation"), PRINT_TO_SCREEN);
     }
-
-    // Update shift registers to reflect the changes
-    updateShiftRegisters();
   }
 }
 
@@ -1384,6 +1446,7 @@ void setLED(int led, bool state) {
       ledStates4 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
     }
   }
+  updateShiftRegisters();
 }
 
 // Function to update the shift registers with current LED states
@@ -1440,10 +1503,8 @@ void ALL_LEDS_OFF() {
   digitalWrite(LED_SOLAR, LOW);
   digitalWrite(LED_RADS, LOW);
   digitalWrite(LED_SCIENCE, LOW);
-
   // Update shift registers to apply the changes
   updateShiftRegisters();
 }
-
 
 
