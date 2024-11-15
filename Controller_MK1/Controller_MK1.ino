@@ -70,7 +70,8 @@ const int YAW_PIN = A3;
 const int TRANSLATE_Z_PIN = A4;
 const int TRANSLATE_X_PIN = A5;
 const int TRANSLATE_Y_PIN = A6;
-const int POT_PIN = A7;
+const int POT_SAS_PIN = A7;
+const int POT_CONTROL_PIN = A8;
 
 // Switches
 const int BRAKE_SWITCH = 6;
@@ -102,7 +103,7 @@ const int TIMEWARP_MINUS_BUTTON_PIN = 35;
 const int TIMEWARP_PAUSE_BUTTON_PIN = 36;
 const int TIMEWARP_PERIAPSIS_BUTTON_PIN = 37;
 const int TIMEWARP_MANEUVER_BUTTON_PIN = 38;
-const int TIMERWARP_APOAPSIS_BUTTON_PIN = 39;
+const int TIMERWARP_APOAPSIS_BUTTON_PIN = 26;
 const int TIMEWARP_NORMAL_BUTTON_PIN = 40;
 const int TIMEWARP_PLUS_BUTTON_PIN = 41;
 const int ACTION_GROUP_10_BUTTON_PIN = 42;
@@ -143,7 +144,7 @@ int readingActionGroup7Button;
 int readingActionGroup8Button;
 int readingActionGroup9Button;
 int readingActionGroup10Button;
-
+int throttlePercentage;
 // Timing constants
 const unsigned long DEBOUNCE_DELAY = 50; // Debounce delay in milliseconds
 const unsigned int LCD_UPDATE_INTERVAL = 125;  // LCD update frequency
@@ -164,6 +165,9 @@ const int ZOOM_OUT_KEY = 0x22;   // Page Down key (Zoom Out)
 const int LOAD_KEY = 0x78;      // F9 Key for loading
 const int SAVE_KEY = 0x74;      // F5 Key for loading
 const int SHIPS_KEY = 0xDD;     // ] key for cycling ships
+const int MAP_KEY = 0x4D;     // M key for cycling ships
+const int CAMERA_KEY = 0x56;     // V key for cycling ships
+const int PAUSE_KEY = 0x1B;     // ESC key for pause/menu
 
 // Track whether keys are currently pressed
 bool left_pressed = false, right_pressed = false;
@@ -266,7 +270,9 @@ int lastActionGroup8ButtonState = HIGH;
 int lastActionGroup9ButtonState = HIGH;
 int lastActionGroup10ButtonState = HIGH;
 
-int lastpotvalue = 0;
+int LastSASModePotValue = 0;
+int LastControlModePotValue = 0;
+
 int lcdScreenCase = 0;
 int lcdScreenCaseBeforeAlarm = 0;
 bool lcdAlarmState = false;
@@ -283,6 +289,7 @@ vesselPointingMessage myRotation;
 tempLimitMessage myTemplimits;
 atmoConditionsMessage myAtmoConditions;
 resourceMessage myElectric;
+flightStatusMessage myFlightStatus;
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -364,7 +371,7 @@ void setup() {
   pinMode(STAGE_ARM_SWITCH, INPUT_PULLUP);
   pinMode(ABORT_ARM_SWITCH, INPUT_PULLUP);  
   pinMode(LIGHTS_SWITCH_LED, OUTPUT);
-  pinMode(POT_PIN, INPUT);
+  pinMode(POT_SAS_PIN, INPUT);
   pinMode(LATCH_PIN, OUTPUT);
   pinMode(CLOCK_PIN, OUTPUT);
   pinMode(DATA_PIN, OUTPUT);
@@ -394,6 +401,7 @@ void setup() {
 
 // Main loop function
 void loop() {
+  mySimpit.update();
   unsigned long now = millis();
   handleSwitches(now);
   handleButtons(now);
@@ -401,7 +409,8 @@ void loop() {
   handleJoystickButtons(now);
   handleTempAlarm();
   SAS_mode_pot();
-
+  Control_mode_pot();
+  LEDS_ALARM_PANEL();
 
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
@@ -424,7 +433,7 @@ void loop() {
     sendTranslationCommands();
   }
 
-  mySimpit.update();
+  
 
 }
 
@@ -449,6 +458,7 @@ void connectToKSP() {
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
   mySimpit.registerChannel(ACTIONSTATUS_MESSAGE);
   mySimpit.registerChannel(SAS_MODE_INFO_MESSAGE);
+  mySimpit.registerChannel(FLIGHT_STATUS_MESSAGE);
   
 }
 
@@ -736,8 +746,6 @@ void handleButtons(unsigned long now) {
       keyboardEmulatorMessage loadMsg(LOAD_KEY, KEY_DOWN_MOD);
       mySimpit.send(KEYBOARD_EMULATOR, loadMsg);
     }
-    keyboardEmulatorMessage loadMsg(LOAD_KEY, KEY_UP_MOD);
-    mySimpit.send(KEYBOARD_EMULATOR, loadMsg);
     lastDebounceTimeLoadButton = now;
   }
   lastLoadButtonState = readingLoadButton;
@@ -775,7 +783,11 @@ void handleButtons(unsigned long now) {
   if (readingCameraButton != lastCameraButtonState && (now - lastDebounceTimeCameraButton) > DEBOUNCE_DELAY) {
     if (readingCameraButton == LOW) {
       mySimpit.printToKSP("Camera button pressed", PRINT_TO_SCREEN);
+      keyboardEmulatorMessage CameraMsg(CAMERA_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, CameraMsg);
     }
+    keyboardEmulatorMessage CameraMsg(CAMERA_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, CameraMsg);
     lastDebounceTimeCameraButton = now;
   }
   lastCameraButtonState = readingCameraButton;
@@ -785,8 +797,13 @@ void handleButtons(unsigned long now) {
   if (readingMapButton != lastMapButtonState && (now - lastDebounceTimeMapButton) > DEBOUNCE_DELAY) {
     if (readingMapButton == LOW) {
       mySimpit.printToKSP("Map button pressed", PRINT_TO_SCREEN);
+      keyboardEmulatorMessage MapMsg(MAP_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, MapMsg);
     }
+    keyboardEmulatorMessage MapMsg(MAP_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, MapMsg);
     lastDebounceTimeMapButton = now;
+
   }
   lastMapButtonState = readingMapButton;
 
@@ -795,6 +812,9 @@ void handleButtons(unsigned long now) {
   if (readingTimewarpMinusButton != lastTimewarpMinusButtonState && (now - lastDebounceTimeTimewarpMinusButton) > DEBOUNCE_DELAY) {
     if (readingTimewarpMinusButton == LOW) {
       mySimpit.printToKSP("Timewarp Minus button pressed", PRINT_TO_SCREEN);
+      timewarpMessage tw_msg_down;
+      tw_msg_down.command = TIMEWARP_DOWN;
+      mySimpit.send(TIMEWARP_MESSAGE, tw_msg_down);
     }
     lastDebounceTimeTimewarpMinusButton = now;
   }
@@ -805,7 +825,11 @@ void handleButtons(unsigned long now) {
   if (readingTimewarpPauseButton != lastTimewarpPauseButtonState && (now - lastDebounceTimeTimewarpPauseButton) > DEBOUNCE_DELAY) {
     if (readingTimewarpPauseButton == LOW) {
       mySimpit.printToKSP("Timewarp Pause button pressed", PRINT_TO_SCREEN);
+      keyboardEmulatorMessage PauseMsg(PAUSE_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, PauseMsg);
     }
+    keyboardEmulatorMessage PauseMsg(PAUSE_KEY, KEY_UP_MOD);
+    mySimpit.send(KEYBOARD_EMULATOR, PauseMsg);
     lastDebounceTimeTimewarpPauseButton = now;
   }
   lastTimewarpPauseButtonState = readingTimewarpPauseButton;
@@ -815,6 +839,8 @@ void handleButtons(unsigned long now) {
   if (readingTimewarpPeriapsisButton != lastTimewarpPeriapsisButtonState && (now - lastDebounceTimeTimewarpPeriapsisButton) > DEBOUNCE_DELAY) {
     if (readingTimewarpPeriapsisButton == LOW) {
       mySimpit.printToKSP("Timewarp Periapsis button pressed", PRINT_TO_SCREEN);
+      timewarpToMessage twTo_msg(TIMEWARP_TO_PERIAPSIS, -15);
+      mySimpit.send(TIMEWARP_TO_MESSAGE, twTo_msg);
     }
     lastDebounceTimeTimewarpPeriapsisButton = now;
   }
@@ -825,6 +851,8 @@ void handleButtons(unsigned long now) {
   if (readingTimewarpManeuverButton != lastTimewarpManeuverButtonState && (now - lastDebounceTimeTimewarpManeuverButton) > DEBOUNCE_DELAY) {
     if (readingTimewarpManeuverButton == LOW) {
       mySimpit.printToKSP("Timewarp Maneuver button pressed", PRINT_TO_SCREEN);
+      timewarpToMessage twTo_msg(TIMEWARP_TO_NEXT_MANEUVER, -15);
+      mySimpit.send(TIMEWARP_TO_MESSAGE, twTo_msg);
     }
     lastDebounceTimeTimewarpManeuverButton = now;
   }
@@ -835,6 +863,8 @@ void handleButtons(unsigned long now) {
   if (readingTimewarpApoapsisButton != lastTimewarpApoapsisButtonState && (now - lastDebounceTimeTimewarpApoapsisButton) > DEBOUNCE_DELAY) {
     if (readingTimewarpApoapsisButton == LOW) {
       mySimpit.printToKSP("Timewarp Apoapsis button pressed", PRINT_TO_SCREEN);
+      timewarpToMessage twTo_msg(TIMEWARP_TO_APOAPSIS, -15);
+      mySimpit.send(TIMEWARP_TO_MESSAGE, twTo_msg);
     }
     lastDebounceTimeTimewarpApoapsisButton = now;
   }
@@ -845,6 +875,14 @@ void handleButtons(unsigned long now) {
   if (readingTimewarpNormalButton != lastTimewarpNormalButtonState && (now - lastDebounceTimeTimewarpNormalButton) > DEBOUNCE_DELAY) {
     if (readingTimewarpNormalButton == LOW) {
       mySimpit.printToKSP("Timewarp Normal button pressed", PRINT_TO_SCREEN);
+      timewarpMessage tw_msg_x1;
+      tw_msg_x1.command = TIMEWARP_X1;
+      mySimpit.send(TIMEWARP_MESSAGE, tw_msg_x1);
+      timewarpMessage tw_msg_cancel;
+      tw_msg_cancel.command = TIMEWARP_CANCEL_AUTOWARP;
+      mySimpit.send(TIMEWARP_MESSAGE, tw_msg_cancel);
+
+      
     }
     lastDebounceTimeTimewarpNormalButton = now;
   }
@@ -855,6 +893,10 @@ void handleButtons(unsigned long now) {
   if (readingTimewarpPlusButton != lastTimewarpPlusButtonState && (now - lastDebounceTimeTimewarpPlusButton) > DEBOUNCE_DELAY) {
     if (readingTimewarpPlusButton == LOW) {
       mySimpit.printToKSP("Timewarp Plus button pressed", PRINT_TO_SCREEN);
+      timewarpMessage tw_msg_up;
+      tw_msg_up.command = TIMEWARP_UP;
+      mySimpit.send(TIMEWARP_MESSAGE, tw_msg_up);
+
     }
     lastDebounceTimeTimewarpPlusButton = now;
   }
@@ -866,6 +908,11 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup1Button == LOW) {
       mySimpit.printToKSP("Action Group 1 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+       mySimpit.toggleCAG(1);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
+        
     }
     lastDebounceTimeActionGroup1Button = now;
   }
@@ -877,6 +924,10 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup2Button == LOW) {
       mySimpit.printToKSP("Action Group 2 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(2);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
     }
     lastDebounceTimeActionGroup2Button = now;
   }
@@ -888,6 +939,10 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup3Button == LOW) {
       mySimpit.printToKSP("Action Group 3 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(3);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
     }
     lastDebounceTimeActionGroup3Button = now;
   }
@@ -899,6 +954,10 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup4Button == LOW) {
       mySimpit.printToKSP("Action Group 4 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(4);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
     }
     lastDebounceTimeActionGroup4Button = now;
   }
@@ -910,6 +969,10 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup5Button == LOW) {
       mySimpit.printToKSP("Action Group 5 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(5);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
     }
     lastDebounceTimeActionGroup5Button = now;
   }
@@ -921,6 +984,10 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup6Button == LOW) {
       mySimpit.printToKSP("Action Group 6 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(6);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
     }
     lastDebounceTimeActionGroup6Button = now;
   }
@@ -932,6 +999,10 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup7Button == LOW) {
       mySimpit.printToKSP("Action Group 7 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(7);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
     }
     lastDebounceTimeActionGroup7Button = now;
   }
@@ -943,6 +1014,10 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup8Button == LOW) {
       mySimpit.printToKSP("Action Group 8 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(8);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
     }
     lastDebounceTimeActionGroup8Button = now;
   }
@@ -954,6 +1029,10 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup9Button == LOW) {
       mySimpit.printToKSP("Action Group 9 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(9);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
     }
     lastDebounceTimeActionGroup9Button = now;
   }
@@ -965,11 +1044,16 @@ void handleButtons(unsigned long now) {
     if (readingActionGroup10Button == LOW) {
       mySimpit.printToKSP("Action Group 10 button pressed", PRINT_TO_SCREEN);
       setLED(LED_ACTION_GROUP, true);
+      mySimpit.toggleCAG(10);
+    } else {
+        // If button is released (HIGH)
+        setLED(LED_ACTION_GROUP, false); // Turn off the LED
+        
     }
     lastDebounceTimeActionGroup10Button = now;
   }
   lastActionGroup10ButtonState = readingActionGroup10Button;
-  setLED(LED_ACTION_GROUP, false);
+
   // Abort button debouncing logic
   readingAbortButton = digitalRead(ABORT_BUTTON_PIN);
   if (readingAbortButton != lastAbortButtonState && (now - lastDebounceTimeAbortButton) > DEBOUNCE_DELAY) {
@@ -1146,7 +1230,28 @@ void updateLCD() {
 void sendThrottleCommands() {
   throttleMessage throttleMsg;
   int reading = analogRead(THROTTLE_PIN);
-  throttleMsg.throttle = map(reading, 0, 1023, INT16_MAX, 0);
+
+  int16_t throttlePercentage = 0; // Calculate throttle in 0-100%
+
+// Interpolate the throttle percentage based on observed ranges
+if (reading >= 990) {
+  throttlePercentage = 0; // Explicitly set to zero at maximum reading
+} else if (reading >= 900) {
+  throttlePercentage = 0 + (995 - reading) * 25 / (995 - 900);
+} else if (reading >= 500) {
+  throttlePercentage = 25 + (900 - reading) * 25 / (900 - 500);
+} else if (reading >= 118) {
+  throttlePercentage = 50 + (500 - reading) * 25 / (500 - 118);
+} else if (reading >= 8) {
+  throttlePercentage = 75 + (118 - reading) * 25 / (118 - 8);
+} else {
+  throttlePercentage = 100;
+}
+
+  // Scale throttlePercentage (0-100) to 0 to INT16_MAX (32767)
+  throttleMsg.throttle = map(throttlePercentage, 0, 100, 0, INT16_MAX);
+
+  // Send throttle message
   mySimpit.send(THROTTLE_MESSAGE, throttleMsg);
 }
 
@@ -1205,6 +1310,7 @@ void sendCameraCommands() {
   if (readingZoom > (512 + DEADZONE_CAMERA_COMMANDS) && !zoom_in_pressed) {
     keyboardEmulatorMessage zoomMsg(ZOOM_IN_KEY, KEY_DOWN_MOD);
     mySimpit.send(KEYBOARD_EMULATOR, zoomMsg);
+
     zoom_in_pressed = true;
   } else if (readingZoom <= (512 + DEADZONE_CAMERA_COMMANDS) && zoom_in_pressed) {
     keyboardEmulatorMessage zoomMsg(ZOOM_IN_KEY, KEY_UP_MOD);
@@ -1298,6 +1404,7 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
     case ATMO_CONDITIONS_MESSAGE:
       if (msgSize == sizeof(atmoConditionsMessage)) {
         myAtmoConditions = parseMessage<atmoConditionsMessage>(msg);
+        LEDS_ALARM_PANEL();
       }
       break;
     case AIRSPEED_MESSAGE:
@@ -1343,6 +1450,13 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
       }
       break;
 
+    case FLIGHT_STATUS_MESSAGE: {
+        if (msgSize == sizeof(flightStatusMessage)) {
+          myFlightStatus = parseMessage<flightStatusMessage>(msg);
+          LEDS_ALARM_PANEL();
+        }
+      } break;
+
 
   }
   
@@ -1350,52 +1464,89 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
 
 void SAS_mode_pot() {
   // Read the potentiometer value (0 to 1023)
-  int potValue = analogRead(POT_PIN);
+  int POT_SAS_VALUE = analogRead(POT_SAS_PIN);
   // Check if the potentiometer value has changed by more than 10
-  if (abs(lastpotvalue - potValue) > 3) {
-    lastpotvalue = potValue;
+  if (abs(LastSASModePotValue - POT_SAS_VALUE) > 3) {
+    LastSASModePotValue = POT_SAS_VALUE;
     mySimpit.printToKSP(" update SAS MODE", PRINT_TO_SCREEN);
 
     // Clear only the LEDs used in this function
     clearSASModeLEDs();
 
     // Define custom potentiometer ranges for each LED and turn them on accordingly
-    if (potValue >= 0 && potValue < 10) {
+    if (POT_SAS_VALUE >= 0 && POT_SAS_VALUE < 10) {
       setLED(LED_AUTO_PILOT, true);
-    } else if (potValue >= 10 && potValue < 95) {
+    } else if (POT_SAS_VALUE >= 10 && POT_SAS_VALUE < 95) {
       setLED(LED_ANTI_NORMAL, true);
       mySimpit.setSASMode(AP_ANTINORMAL);
-    } else if (potValue >= 95 && potValue < 195) {
+    } else if (POT_SAS_VALUE >= 95 && POT_SAS_VALUE < 195) {
       setLED(LED_NORMAL, true);
       mySimpit.setSASMode(AP_NORMAL);
-    } else if (potValue >= 195 && potValue < 310) {
+    } else if (POT_SAS_VALUE >= 195 && POT_SAS_VALUE < 310) {
       setLED(LED_RETRO_GRADE, true);
       mySimpit.setSASMode(AP_RETROGRADE);
-    } else if (potValue >= 310 && potValue < 420) {
+    } else if (POT_SAS_VALUE >= 310 && POT_SAS_VALUE < 420) {
       setLED(LED_PRO_GRADE, true);
       mySimpit.setSASMode(AP_PROGRADE);
-    } else if (potValue >= 420 && potValue < 507) {
+    } else if (POT_SAS_VALUE >= 420 && POT_SAS_VALUE < 507) {
       setLED(LED_MANAUVER, true);
       mySimpit.setSASMode(AP_MANEUVER);
-    } else if (potValue >= 507 && potValue < 600) {
+    } else if (POT_SAS_VALUE >= 507 && POT_SAS_VALUE < 600) {
       setLED(LED_STABILITY_ASSIST, true);
       mySimpit.setSASMode(AP_STABILITYASSIST);
-    } else if (potValue >= 600 && potValue < 690) {
+    } else if (POT_SAS_VALUE >= 600 && POT_SAS_VALUE < 690) {
       setLED(LED_RADIAL_OUT, true);
       mySimpit.setSASMode(AP_RADIALOUT);
-    } else if (potValue >= 690 && potValue < 790) {
+    } else if (POT_SAS_VALUE >= 690 && POT_SAS_VALUE < 790) {
       setLED(LED_RADIAL_IN, true);
       mySimpit.setSASMode(AP_RADIALIN);
-    } else if (potValue >= 790 && potValue < 875) {
+    } else if (POT_SAS_VALUE >= 790 && POT_SAS_VALUE < 875) {
       setLED(LED_TARGET, true);
       mySimpit.setSASMode(AP_TARGET);
-    } else if (potValue >= 875 && potValue < 975) {
+    } else if (POT_SAS_VALUE >= 875 && POT_SAS_VALUE < 975) {
       setLED(LED_ANTI_TARGET, true);
       mySimpit.setSASMode(AP_ANTITARGET);
-    } else if (potValue >= 975 && potValue < 1024) {
+    } else if (POT_SAS_VALUE >= 975 && POT_SAS_VALUE < 1024) {
       setLED(LED_NAVIGATION, true);
       mySimpit.printToKSP(F("Navigation"), PRINT_TO_SCREEN);
     }
+  }
+}
+
+void Control_mode_pot() {
+  // Read the potentiometer value (0 to 1023)
+  int POT_CONTROL_VALUE = analogRead(POT_CONTROL_PIN);
+  // Check if the potentiometer value has changed by more than 10
+  if (abs(LastControlModePotValue - POT_CONTROL_VALUE) > 3) {
+    LastControlModePotValue = POT_CONTROL_VALUE;
+    mySimpit.printToKSP(" update CONTROL MODE", PRINT_TO_SCREEN);
+    mySimpit.printToKSP(" update CONTROL MODE", PRINT_TO_SCREEN);
+    // Clear only the LEDs used in this function
+    clearControlModeLEDs();
+
+    // Define custom potentiometer ranges for each LED and turn them on accordingly
+    if (POT_CONTROL_VALUE >= 0 && POT_CONTROL_VALUE < 170) {
+      
+      setLED(LED_PlANE_MODE, true);
+
+    } else if (POT_CONTROL_VALUE >= 170 && POT_CONTROL_VALUE < 340) {
+      setLED(LED_ROVER_MODE, true);
+ 
+    } else if (POT_CONTROL_VALUE >= 340 && POT_CONTROL_VALUE < 510) {
+      setLED(LED_ROCKET_MODE, true);
+
+    } else if (POT_CONTROL_VALUE >= 510 && POT_CONTROL_VALUE < 680) {
+      
+      setLED(LED_PRECISION, true);
+
+    } else if (POT_CONTROL_VALUE >= 680 && POT_CONTROL_VALUE < 850) {
+      
+      setLED(LED_EVA_MODE, true);
+     
+    } else if (POT_CONTROL_VALUE >= 920 && POT_CONTROL_VALUE < 1024) {
+      
+      setLED(LED_DOCKING_MODE, true);
+    } 
   }
 }
 
@@ -1414,6 +1565,16 @@ void clearSASModeLEDs() {
   setLED(LED_TARGET, false);
   setLED(LED_ANTI_TARGET, false);
   setLED(LED_NAVIGATION, false);
+}
+
+// Function to clear only the LEDs used in Control_mode_pot()
+void clearControlModeLEDs() {
+  setLED(LED_DOCKING_MODE, false);
+  setLED(LED_EVA_MODE, false);
+  setLED(LED_PRECISION, false);
+  setLED(LED_ROCKET_MODE, false);
+  setLED(LED_ROVER_MODE, false);
+  setLED(LED_PlANE_MODE, false);
 }
 
 // Function to set the state of a specific LED (on or off)
@@ -1490,7 +1651,7 @@ void ALL_LEDS_ON() {
 }
 
 // Function to turn off all LEDs in all four shift registers (LEDs 1-32)
-// and the non-shift-register LEDs
+// and the non-shift-register LEDs.
 void ALL_LEDS_OFF() {
   // Set all bits to 0 in all shift register variables
   ledStates1 = 0x00;  // All LEDs in the first shift register (LEDs 1-8) OFF
@@ -1506,5 +1667,33 @@ void ALL_LEDS_OFF() {
   // Update shift registers to apply the changes
   updateShiftRegisters();
 }
+
+void LEDS_ALARM_PANEL(){
+  if (myAtmoConditions.isVesselInAtmosphere()) {
+    setLED(LED_ATMOS,true);
+    if (myAtmoConditions.hasOxygen()) {
+    setLED(LED_OXYGEN,true);
+  } else {
+    setLED(LED_OXYGEN,false);
+  }
+  } else {
+    setLED(LED_ATMOS,false);
+    setLED(LED_OXYGEN,false);
+  }
+
+
+  if (round(myVelocity.surface) < 3){
+    if (myFlightStatus.isRecoverable()){
+    setLED(LED_RECOVER,true);
+    }else {
+    setLED(LED_RECOVER,false);
+  } 
+  } else {
+    setLED(LED_RECOVER,false);
+  } 
+
+}
+
+
 
 
