@@ -280,6 +280,10 @@ bool lcdAlarmStateOverride = false;
 
 bool translationButtonPressed = false;
 
+int readingPitchTrim = 0;
+int readingYawTrim = 0;
+int readingRollTrim = 0;
+
 // Global variable declarations
 airspeedMessage myAirspeed;
 deltaVMessage myDeltaV;
@@ -720,9 +724,13 @@ void handleButtons(unsigned long now) {
   //--------------------
   // Trim button debouncing logic
   readingTrimButton = digitalRead(TRIM_BUTTON_PIN);
+  
   if (readingTrimButton != lastTrimButtonState && (now - lastDebounceTimeTrimButton) > DEBOUNCE_DELAY) {
     if (readingTrimButton == LOW) {
       mySimpit.printToKSP("Trim button pressed", PRINT_TO_SCREEN);
+      readingPitchTrim = analogRead(PITCH_PIN) -512;
+      readingRollTrim = analogRead(ROLL_PIN) -512;
+      readingYawTrim = analogRead(YAW_PIN) -512;
     }
     lastDebounceTimeTrimButton = now;
   }
@@ -733,6 +741,9 @@ void handleButtons(unsigned long now) {
   if (readingResetTrimButton != lastResetTrimButtonState && (now - lastDebounceTimeResetTrimButton) > DEBOUNCE_DELAY) {
     if (readingResetTrimButton == LOW) {
       mySimpit.printToKSP("ResetTrim button pressed", PRINT_TO_SCREEN);
+      readingPitchTrim = 0;
+      readingRollTrim = 0;
+      readingYawTrim = 0;
     }
     lastDebounceTimeResetTrimButton = now;
   }
@@ -1370,6 +1381,17 @@ void sendRotationCommands() {
   int readingPitch = analogRead(PITCH_PIN);
   int readingRoll = analogRead(ROLL_PIN);
   int readingYaw = analogRead(YAW_PIN);
+
+  //adding Trim vallues
+  readingPitch += readingPitchTrim; // Add the trim value
+  readingPitch = constrain(readingPitch, 0, 1023); // Limit the value to 0-1023
+
+  readingRoll += readingRollTrim;
+  readingRoll = constrain(readingRoll, 0, 1023);
+
+  readingYaw += readingYawTrim;
+  readingYaw = constrain(readingYaw, 0, 1023);
+
 
   int16_t pitch = 0;
   if (readingPitch > (512 + DEADZONE)) {
