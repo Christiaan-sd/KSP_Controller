@@ -294,6 +294,7 @@ tempLimitMessage myTemplimits;
 atmoConditionsMessage myAtmoConditions;
 resourceMessage myElectric;
 flightStatusMessage myFlightStatus;
+advancedActionStatusMessage myAdvancedActionStatusMessage;
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -306,6 +307,8 @@ byte deltaChar[8] = {
   0b00000,
   0b00000
 };
+
+byte AdvancedActionStatusMessage[10];
 
 
 // Function Prototypes
@@ -415,7 +418,8 @@ void loop() {
   SAS_mode_pot();
   Control_mode_pot();
   LEDS_ALARM_PANEL();
-
+  CHECK_FOR_SCIENCE();
+  
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
     lastLCDUpdate = now; // Update the last LCD update time
@@ -463,6 +467,7 @@ void connectToKSP() {
   mySimpit.registerChannel(ACTIONSTATUS_MESSAGE);
   mySimpit.registerChannel(SAS_MODE_INFO_MESSAGE);
   mySimpit.registerChannel(FLIGHT_STATUS_MESSAGE);
+  mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
   
 }
 
@@ -699,7 +704,7 @@ void handleButtons(unsigned long now) {
     if (readingScienceButton == LOW) {
       scienceButtonPressed = !scienceButtonPressed;
       mySimpit.printToKSP("Science button pressed", PRINT_TO_SCREEN);
-      digitalWrite(LED_SCIENCE, scienceButtonPressed ? HIGH : LOW);
+      
     }
     lastDebounceTimeScienceButton = now;
   }
@@ -1479,6 +1484,17 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
         }
       } break;
 
+    case ADVANCED_ACTIONSTATUS_MESSAGE: {
+        if (msgSize == sizeof(advancedActionStatusMessage) )
+        {
+          advancedActionStatusMessage actionStatusMsg = parseMessage<advancedActionStatusMessage>(msg);
+          for(int i = 0; i < 10; i++) //There are 9 action groups (stage, gear, ...), they are listed in the AdvancedActionGroupIndexes enum. Some are only available for KSP2
+          {
+            AdvancedActionStatusMessage[i] = actionStatusMsg.getActionStatus(i);
+          }
+        }
+      } break;
+
 
   }
   
@@ -1716,6 +1732,17 @@ void LEDS_ALARM_PANEL(){
 
 }
 
+void CHECK_FOR_SCIENCE(){
 
+ 
+  if((myAdvancedActionStatusMessage.getActionStatus(ADVANCED_SCIENCE_ACTION) & ADVANCED_AG_STATE_BITMASK_SCIENCE_AVAILABLE) != 0){
+    digitalWrite(LED_SCIENCE, HIGH);
+    mySimpit.printToKSP("NEW SCIENCE: " + myAdvancedActionStatusMessage.getActionStatus(ADVANCED_SCIENCE_ACTION), PRINT_TO_SCREEN);
+
+  } else {
+    digitalWrite(LED_SCIENCE, LOW);
+    mySimpit.printToKSP(" No NEW SCIENCE: " + myAdvancedActionStatusMessage.getActionStatus(ADVANCED_SCIENCE_ACTION), PRINT_TO_SCREEN);
+  }
+}
 
 
