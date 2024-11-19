@@ -294,7 +294,6 @@ tempLimitMessage myTemplimits;
 atmoConditionsMessage myAtmoConditions;
 resourceMessage myElectric;
 flightStatusMessage myFlightStatus;
-advancedActionStatusMessage myAdvancedActionStatusMessage;
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -418,7 +417,6 @@ void loop() {
   SAS_mode_pot();
   Control_mode_pot();
   LEDS_ALARM_PANEL();
-  CHECK_FOR_SCIENCE();
   
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
@@ -704,6 +702,10 @@ void handleButtons(unsigned long now) {
     if (readingScienceButton == LOW) {
       scienceButtonPressed = !scienceButtonPressed;
       mySimpit.printToKSP("Science button pressed", PRINT_TO_SCREEN);
+      mySimpit.toggleCAG(8);
+      blinkLedFor5Seconds();
+      
+
       
     }
     lastDebounceTimeScienceButton = now;
@@ -1732,17 +1734,5 @@ void LEDS_ALARM_PANEL(){
 
 }
 
-void CHECK_FOR_SCIENCE(){
-
- 
-  if((myAdvancedActionStatusMessage.getActionStatus(ADVANCED_SCIENCE_ACTION) & ADVANCED_AG_STATE_BITMASK_SCIENCE_AVAILABLE) != 0){
-    digitalWrite(LED_SCIENCE, HIGH);
-    mySimpit.printToKSP("NEW SCIENCE: " + myAdvancedActionStatusMessage.getActionStatus(ADVANCED_SCIENCE_ACTION), PRINT_TO_SCREEN);
-
-  } else {
-    digitalWrite(LED_SCIENCE, LOW);
-    mySimpit.printToKSP(" No NEW SCIENCE: " + myAdvancedActionStatusMessage.getActionStatus(ADVANCED_SCIENCE_ACTION), PRINT_TO_SCREEN);
-  }
-}
 
 
