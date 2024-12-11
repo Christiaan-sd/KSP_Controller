@@ -277,8 +277,13 @@ int lcdScreenCase = 0;
 int lcdScreenCaseBeforeAlarm = 0;
 bool lcdAlarmState = false;
 bool lcdAlarmStateOverride = false;
-
 bool translationButtonPressed = false;
+bool ROCKET_MODE = false;
+bool DOCKING_MODE = false;
+bool EVA_MODE = false;
+bool PRECISION = false;
+bool PlANE_MODE = false;
+bool ROVER_MODE = false;
 
 int readingPitchTrim = 0;
 int readingYawTrim = 0;
@@ -703,10 +708,7 @@ void handleButtons(unsigned long now) {
       scienceButtonPressed = !scienceButtonPressed;
       mySimpit.printToKSP("Science button pressed", PRINT_TO_SCREEN);
       mySimpit.toggleCAG(8);
-      blinkLedFor5Seconds();
-      
-
-      
+     
     }
     lastDebounceTimeScienceButton = now;
   }
@@ -1252,7 +1254,7 @@ void sendThrottleCommands() {
   int16_t throttlePercentage = 0; // Calculate throttle in 0-100%
 
 // Interpolate the throttle percentage based on observed ranges
-if (reading >= 990) {
+if (reading >= 980) {
   throttlePercentage = 0; // Explicitly set to zero at maximum reading
 } else if (reading >= 900) {
   throttlePercentage = 0 + (995 - reading) * 25 / (995 - 900);
@@ -1384,6 +1386,9 @@ void sendTranslationCommands() {
 
 // Function to send rotation commands
 void sendRotationCommands() {
+
+
+  
   rotationMessage rotMsg;
   int readingPitch = analogRead(PITCH_PIN);
   int readingRoll = analogRead(ROLL_PIN);
@@ -1560,32 +1565,69 @@ void Control_mode_pot() {
   if (abs(LastControlModePotValue - POT_CONTROL_VALUE) > 3) {
     LastControlModePotValue = POT_CONTROL_VALUE;
     mySimpit.printToKSP(" update CONTROL MODE", PRINT_TO_SCREEN);
-    mySimpit.printToKSP(" update CONTROL MODE", PRINT_TO_SCREEN);
+    
     // Clear only the LEDs used in this function
     clearControlModeLEDs();
 
     // Define custom potentiometer ranges for each LED and turn them on accordingly
     if (POT_CONTROL_VALUE >= 0 && POT_CONTROL_VALUE < 170) {
-      
+      bool ROCKET_MODE = false;
+      bool DOCKING_MODE = false;
+      bool EVA_MODE = false;
+      bool PRECISION = false;
+      bool PlANE_MODE = true;
+      bool ROVER_MODE = false;
       setLED(LED_PlANE_MODE, true);
 
     } else if (POT_CONTROL_VALUE >= 170 && POT_CONTROL_VALUE < 340) {
       setLED(LED_ROVER_MODE, true);
+      bool ROCKET_MODE = false;
+      bool DOCKING_MODE = false;
+      bool EVA_MODE = false;
+      bool PRECISION = false;
+      bool PlANE_MODE = true;
+      bool ROVER_MODE = true;
  
     } else if (POT_CONTROL_VALUE >= 340 && POT_CONTROL_VALUE < 510) {
       setLED(LED_ROCKET_MODE, true);
+      bool ROCKET_MODE = true;
+      bool DOCKING_MODE = false;
+      bool EVA_MODE = false;
+      bool PRECISION = false;
+      bool PlANE_MODE = true;
+      bool ROVER_MODE = false;
 
     } else if (POT_CONTROL_VALUE >= 510 && POT_CONTROL_VALUE < 680) {
       
       setLED(LED_PRECISION, true);
+      bool ROCKET_MODE = false;
+      bool DOCKING_MODE = false;
+      bool EVA_MODE = false;
+      bool PRECISION = true;
+      bool PlANE_MODE = true;
+      bool ROVER_MODE = false;
 
     } else if (POT_CONTROL_VALUE >= 680 && POT_CONTROL_VALUE < 850) {
       
       setLED(LED_EVA_MODE, true);
+      bool ROCKET_MODE = false;
+      bool DOCKING_MODE = false;
+      bool EVA_MODE = true;
+      bool PRECISION = false;
+      bool PlANE_MODE = true;
+      bool ROVER_MODE = false;
+      
      
     } else if (POT_CONTROL_VALUE >= 920 && POT_CONTROL_VALUE < 1024) {
       
       setLED(LED_DOCKING_MODE, true);
+      bool ROCKET_MODE = false;
+      bool DOCKING_MODE = true;
+      bool EVA_MODE = false;
+      bool PRECISION = false;
+      bool PlANE_MODE = true;
+      bool ROVER_MODE = false;
+      
     } 
   }
 }
