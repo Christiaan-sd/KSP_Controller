@@ -174,6 +174,28 @@ bool left_pressed = false, right_pressed = false;
 bool zoom_in_pressed = false, zoom_out_pressed = false;
 bool pitch_up_pressed = false, pitch_down_pressed = false;
 
+// EVA Mode WASD key codes and tracking
+const int EVA_W_KEY = 0x57;  // W key - Backward
+const int EVA_A_KEY = 0x41;  // A key - Left
+const int EVA_S_KEY = 0x53;  // S key - Forward
+const int EVA_D_KEY = 0x44;  // D key - Right
+const int EVA_Q_KEY = 0x51;  // Q key - Yaw Left
+const int EVA_E_KEY = 0x45;  // E key - Yaw Right
+const int EVA_SHIFT_KEY = 0x10;  // SHIFT key
+const int EVA_SPACE_KEY = 0x20;  // SPACE key
+const int EVA_R_KEY = 0x52;  // R key - Boost toggle
+bool eva_w_pressed = false;  // Backward (W)
+bool eva_a_pressed = false;  // Left (A)
+bool eva_s_pressed = false;  // Forward (S)
+bool eva_d_pressed = false;  // Right (D)
+bool eva_q_pressed = false;  // Yaw Left (Q)
+bool eva_e_pressed = false;  // Yaw Right (E)
+bool eva_shift_space_pressed = false;  // Shift+Space boost
+unsigned long lastDoubleRPressTime = 0;  // Tracking time for double R press
+const long DOUBLE_PRESS_TIMEOUT = 300;  // milliseconds for double press window
+int lastRotationButtonState = HIGH;  // Track previous rotation button state
+bool rotationButtonHeld = false;  // Track if button is being held
+
 // Enum for button states
 enum ButtonState {
   BUTTON_HIGH,
@@ -284,6 +306,7 @@ bool EVA_MODE = false;
 bool PRECISION = false;
 bool PlANE_MODE = false;
 bool ROVER_MODE = false;
+bool roverReverseMode = false;  // Rover gearshift: false = forward, true = reverse
 
 int readingPitchTrim = 0;
 int readingYawTrim = 0;
@@ -326,6 +349,7 @@ void sendThrottleCommands();
 void sendCameraCommands();
 void sendTranslationCommands();
 void sendRotationCommands();
+void sendWheelCommands();
 void messageHandler(byte messageType, byte msg[], byte msgSize);
 
 
@@ -444,7 +468,10 @@ void loop() {
     sendTranslationCommands();
   }
 
-  
+  // Send wheel commands if in ROVER_MODE
+  if (ROVER_MODE) {
+    sendWheelCommands();
+  }
 
 }
 
@@ -687,12 +714,69 @@ void handleJoystickButtons(unsigned long now) {
 
 
       // Handle the rotation button (inverted logic for pull-up)
-      if (readingJoystickButtonRotation == LOW && (now - lastDebounceTimeJoystickRotation) > DEBOUNCE_DELAY) {
-        if (StageArmend == true) {
-        mySimpit.activateAction(STAGE_ACTION);
+      if (readingJoystickButtonRotation == LOW && lastRotationButtonState == HIGH) {
+        // Button just pressed (transition from HIGH to LOW)
+        if (ROVER_MODE) {
+          // In rover mode: toggle direction (gearshift forward/reverse)
+          roverReverseMode = !roverReverseMode;
+          if (roverReverseMode) {
+            mySimpit.printToKSP(F("Rover: REVERSE"), PRINT_TO_SCREEN);
+          } else {
+            mySimpit.printToKSP(F("Rover: FORWARD"), PRINT_TO_SCREEN);
+          }
+          lastDebounceTimeJoystickRotation = now;
+        } else if (EVA_MODE) {
+          // Check if this is a double press within the timeout window
+          if ((now - lastDoubleRPressTime) < DOUBLE_PRESS_TIMEOUT) {
+            // Double press detected: Send R R (quick double tap)
+            keyboardEmulatorMessage rMsg(EVA_R_KEY, KEY_DOWN_MOD);
+            mySimpit.send(KEYBOARD_EMULATOR, rMsg);
+            delay(50);  // Brief press
+            keyboardEmulatorMessage rMsgUp(EVA_R_KEY, KEY_UP_MOD);
+            mySimpit.send(KEYBOARD_EMULATOR, rMsgUp);
+            delay(50);  // Brief gap
+            keyboardEmulatorMessage rMsg2(EVA_R_KEY, KEY_DOWN_MOD);
+            mySimpit.send(KEYBOARD_EMULATOR, rMsg2);
+            delay(50);
+            keyboardEmulatorMessage rMsg2Up(EVA_R_KEY, KEY_UP_MOD);
+            mySimpit.send(KEYBOARD_EMULATOR, rMsg2Up);
+            lastDoubleRPressTime = 0;  // Reset timer after double press
+            rotationButtonHeld = false;  // Don't hold SHIFT+SPACE
+          } else {
+            // First press: Record the time and wait to see if it's a double-press
+            lastDoubleRPressTime = now;
+            rotationButtonHeld = true;  // Mark that button is held, will activate SHIFT+SPACE on timeout
+          }
+        } else {
+          // In other modes: Stage action
+          if (StageArmend == true) {
+            mySimpit.activateAction(STAGE_ACTION);
+          }
         }
         lastDebounceTimeJoystickRotation = now;
+      } else if (readingJoystickButtonRotation == LOW && rotationButtonHeld && EVA_MODE) {
+        // Button still held - check if we've exceeded the double-press timeout
+        if ((now - lastDoubleRPressTime) >= DOUBLE_PRESS_TIMEOUT && !eva_shift_space_pressed) {
+          // Timeout reached, activate SHIFT+SPACE hold
+          keyboardEmulatorMessage shiftMsg(EVA_SHIFT_KEY, KEY_DOWN_MOD);
+          mySimpit.send(KEYBOARD_EMULATOR, shiftMsg);
+          keyboardEmulatorMessage spaceMsg(EVA_SPACE_KEY, KEY_DOWN_MOD);
+          mySimpit.send(KEYBOARD_EMULATOR, spaceMsg);
+          eva_shift_space_pressed = true;
+        }
+      } else if (readingJoystickButtonRotation == HIGH && lastRotationButtonState == LOW) {
+        // Button just released (transition from LOW to HIGH)
+        if (eva_shift_space_pressed && EVA_MODE) {
+          // Release SHIFT+SPACE
+          keyboardEmulatorMessage shiftMsg(EVA_SHIFT_KEY, KEY_UP_MOD);
+          mySimpit.send(KEYBOARD_EMULATOR, shiftMsg);
+          keyboardEmulatorMessage spaceMsg(EVA_SPACE_KEY, KEY_UP_MOD);
+          mySimpit.send(KEYBOARD_EMULATOR, spaceMsg);
+          eva_shift_space_pressed = false;
+        }
+        rotationButtonHeld = false;
       }
+      lastRotationButtonState = readingJoystickButtonRotation;
 }
 
 void handleButtons(unsigned long now) {
@@ -1386,50 +1470,174 @@ void sendTranslationCommands() {
 
 // Function to send rotation commands
 void sendRotationCommands() {
+  // Check if EVA_MODE is active
+  if (EVA_MODE) {
+    // EVA Mode: Use joystick to control WASD keys and QE for yaw
+    // Pitch (Y-axis): Up = S (forward), Down = W (backward)
+    // Roll (X-axis): Left = A (left), Right = D (right)
+    // Yaw (Z-axis): Left = Q, Right = E
+    
+    int readingPitch = analogRead(PITCH_PIN);
+    int readingRoll = analogRead(ROLL_PIN);
+    int readingYaw = analogRead(YAW_PIN);
+
+    // Add trim values
+    readingPitch += readingPitchTrim;
+    readingPitch = constrain(readingPitch, 0, 1023);
+    readingRoll += readingRollTrim;
+    readingRoll = constrain(readingRoll, 0, 1023);
+    readingYaw += readingYawTrim;
+    readingYaw = constrain(readingYaw, 0, 1023);
+
+    // Handle S key (Forward - Pitch Up)
+    if (readingPitch > (512 + DEADZONE) && !eva_s_pressed) {
+      keyboardEmulatorMessage sMsg(EVA_S_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, sMsg);
+      eva_s_pressed = true;
+    } else if (readingPitch <= (512 + DEADZONE) && eva_s_pressed) {
+      keyboardEmulatorMessage sMsg(EVA_S_KEY, KEY_UP_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, sMsg);
+      eva_s_pressed = false;
+    }
+
+    // Handle W key (Backward - Pitch Down)
+    if (readingPitch < (512 - DEADZONE) && !eva_w_pressed) {
+      keyboardEmulatorMessage wMsg(EVA_W_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, wMsg);
+      eva_w_pressed = true;
+    } else if (readingPitch >= (512 - DEADZONE) && eva_w_pressed) {
+      keyboardEmulatorMessage wMsg(EVA_W_KEY, KEY_UP_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, wMsg);
+      eva_w_pressed = false;
+    }
+
+    // Handle A key (Left - Roll Left)
+    if (readingRoll < (512 - DEADZONE) && !eva_a_pressed) {
+      keyboardEmulatorMessage aMsg(EVA_A_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, aMsg);
+      eva_a_pressed = true;
+    } else if (readingRoll >= (512 - DEADZONE) && eva_a_pressed) {
+      keyboardEmulatorMessage aMsg(EVA_A_KEY, KEY_UP_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, aMsg);
+      eva_a_pressed = false;
+    }
+
+    // Handle D key (Right - Roll Right)
+    if (readingRoll > (512 + DEADZONE) && !eva_d_pressed) {
+      keyboardEmulatorMessage dMsg(EVA_D_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, dMsg);
+      eva_d_pressed = true;
+    } else if (readingRoll <= (512 + DEADZONE) && eva_d_pressed) {
+      keyboardEmulatorMessage dMsg(EVA_D_KEY, KEY_UP_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, dMsg);
+      eva_d_pressed = false;
+    }
+
+    // Handle Q key (Yaw Left)
+    if (readingYaw < (512 - DEADZONE) && !eva_q_pressed) {
+      keyboardEmulatorMessage qMsg(EVA_Q_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, qMsg);
+      eva_q_pressed = true;
+    } else if (readingYaw >= (512 - DEADZONE) && eva_q_pressed) {
+      keyboardEmulatorMessage qMsg(EVA_Q_KEY, KEY_UP_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, qMsg);
+      eva_q_pressed = false;
+    }
+
+    // Handle E key (Yaw Right)
+    if (readingYaw > (512 + DEADZONE) && !eva_e_pressed) {
+      keyboardEmulatorMessage eMsg(EVA_E_KEY, KEY_DOWN_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, eMsg);
+      eva_e_pressed = true;
+    } else if (readingYaw <= (512 + DEADZONE) && eva_e_pressed) {
+      keyboardEmulatorMessage eMsg(EVA_E_KEY, KEY_UP_MOD);
+      mySimpit.send(KEYBOARD_EMULATOR, eMsg);
+      eva_e_pressed = false;
+    }
+
+  } else {
+    // PLANE_MODE and other modes: Use rotation commands
+    rotationMessage rotMsg;
+    int readingPitch = analogRead(PITCH_PIN);
+    int readingRoll = analogRead(ROLL_PIN);
+    int readingYaw = analogRead(YAW_PIN);
+
+    //adding Trim vallues
+    readingPitch += readingPitchTrim; // Add the trim value
+    readingPitch = constrain(readingPitch, 0, 1023); // Limit the value to 0-1023
+
+    readingRoll += readingRollTrim;
+    readingRoll = constrain(readingRoll, 0, 1023);
+
+    readingYaw += readingYawTrim;
+    readingYaw = constrain(readingYaw, 0, 1023);
 
 
-  
-  rotationMessage rotMsg;
-  int readingPitch = analogRead(PITCH_PIN);
-  int readingRoll = analogRead(ROLL_PIN);
+    int16_t pitch = 0;
+    if (readingPitch > (512 + DEADZONE)) {
+      pitch = map(readingPitch, 512 + DEADZONE, 1023, 0, INT16_MAX);
+    } else if (readingPitch < (512 - DEADZONE)) {
+      pitch = map(readingPitch, 0, 512 - DEADZONE, INT16_MIN, 0);
+    }
+
+    int16_t roll = 0;
+    if (readingRoll > (512 + DEADZONE)) {
+      roll = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MAX);
+    } else if (readingRoll < (512 - DEADZONE)) {
+      roll = map(readingRoll, 0, 512 - DEADZONE, INT16_MIN, 0);
+    }
+
+    int16_t yaw = 0;
+    // Skip yaw in ROVER_MODE since it's used for wheel steering
+    if (!ROVER_MODE) {
+      if (readingYaw > (512 + DEADZONE)) {
+        yaw = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
+      } else if (readingYaw < (512 - DEADZONE)) {
+        yaw = map(readingYaw, 0, 512 - DEADZONE, INT16_MIN, 0);
+      }
+    }
+
+    rotMsg.setPitch(pitch);
+    rotMsg.setRoll(roll);
+    rotMsg.setYaw(yaw);
+    mySimpit.send(ROTATION_MESSAGE, rotMsg);
+  }
+}
+
+// Send wheel commands for rover mode
+void sendWheelCommands() {
+  wheelMessage wheelMsg;
   int readingYaw = analogRead(YAW_PIN);
 
-  //adding Trim vallues
-  readingPitch += readingPitchTrim; // Add the trim value
-  readingPitch = constrain(readingPitch, 0, 1023); // Limit the value to 0-1023
-
-  readingRoll += readingRollTrim;
-  readingRoll = constrain(readingRoll, 0, 1023);
-
+  // Add trim value for yaw
   readingYaw += readingYawTrim;
   readingYaw = constrain(readingYaw, 0, 1023);
 
-
-  int16_t pitch = 0;
-  if (readingPitch > (512 + DEADZONE)) {
-    pitch = map(readingPitch, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (readingPitch < (512 - DEADZONE)) {
-    pitch = map(readingPitch, 0, 512 - DEADZONE, INT16_MIN, 0);
-  }
-
-  int16_t roll = 0;
-  if (readingRoll > (512 + DEADZONE)) {
-    roll = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MAX);
-  } else if (readingRoll < (512 - DEADZONE)) {
-    roll = map(readingRoll, 0, 512 - DEADZONE, INT16_MIN, 0);
-  }
-
-  int16_t yaw = 0;
+  // Map yaw input to wheel steering (inverted)
+  int16_t steer = 0;
   if (readingYaw > (512 + DEADZONE)) {
-    yaw = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
+    steer = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MIN);  // Inverted
   } else if (readingYaw < (512 - DEADZONE)) {
-    yaw = map(readingYaw, 0, 512 - DEADZONE, INT16_MIN, 0);
+    steer = map(readingYaw, 0, 512 - DEADZONE, INT16_MAX, 0);   // Inverted
   }
 
-  rotMsg.setPitch(pitch);
-  rotMsg.setRoll(roll);
-  rotMsg.setYaw(yaw);
-  mySimpit.send(ROTATION_MESSAGE, rotMsg);
+  // Read throttle input for rover with gearshift
+  int readingThrottle = analogRead(THROTTLE_PIN);
+  // Map throttle input based on direction (forward or reverse)
+  // Throttle goes from INT16_MAX/INT16_MIN (full throttle) to 0 (no throttle)
+  int16_t throttle = 0;
+  if (roverReverseMode) {
+    // Reverse: 0 = full reverse (INT16_MIN), 1023 = no throttle
+    throttle = map(readingThrottle, 0, 1023, INT16_MIN, 0);
+  } else {
+    // Forward: 0 = full forward (INT16_MAX), 1023 = no throttle
+    throttle = map(readingThrottle, 0, 1023, INT16_MAX, 0);
+  }
+
+  // Set steering and throttle for rover
+  wheelMsg.setSteer(steer);
+  wheelMsg.setThrottle(throttle);
+  mySimpit.send(WHEEL_MESSAGE, wheelMsg);
 }
 
 // Message handler for Kerbal Simpit
@@ -1571,62 +1779,68 @@ void Control_mode_pot() {
 
     // Define custom potentiometer ranges for each LED and turn them on accordingly
     if (POT_CONTROL_VALUE >= 0 && POT_CONTROL_VALUE < 170) {
-      bool ROCKET_MODE = false;
-      bool DOCKING_MODE = false;
-      bool EVA_MODE = false;
-      bool PRECISION = false;
-      bool PlANE_MODE = true;
-      bool ROVER_MODE = false;
+      ROCKET_MODE = false;
+      DOCKING_MODE = false;
+      EVA_MODE = false;
+      PRECISION = false;
+      PlANE_MODE = true;
+      ROVER_MODE = false;
+      roverReverseMode = false;  // Reset when exiting rover mode
       setLED(LED_PlANE_MODE, true);
 
     } else if (POT_CONTROL_VALUE >= 170 && POT_CONTROL_VALUE < 340) {
       setLED(LED_ROVER_MODE, true);
-      bool ROCKET_MODE = false;
-      bool DOCKING_MODE = false;
-      bool EVA_MODE = false;
-      bool PRECISION = false;
-      bool PlANE_MODE = true;
-      bool ROVER_MODE = true;
+      ROCKET_MODE = false;
+      DOCKING_MODE = false;
+      EVA_MODE = false;
+      PRECISION = false;
+      PlANE_MODE = true;
+      ROVER_MODE = true;
+          roverReverseMode = false;  // Reset to forward when entering rover mode
  
     } else if (POT_CONTROL_VALUE >= 340 && POT_CONTROL_VALUE < 510) {
       setLED(LED_ROCKET_MODE, true);
-      bool ROCKET_MODE = true;
-      bool DOCKING_MODE = false;
-      bool EVA_MODE = false;
-      bool PRECISION = false;
-      bool PlANE_MODE = true;
-      bool ROVER_MODE = false;
+      ROCKET_MODE = true;
+      DOCKING_MODE = false;
+      EVA_MODE = false;
+      PRECISION = false;
+      PlANE_MODE = true;
+      ROVER_MODE = false;
+      roverReverseMode = false;  // Reset when exiting rover mode
 
     } else if (POT_CONTROL_VALUE >= 510 && POT_CONTROL_VALUE < 680) {
       
       setLED(LED_PRECISION, true);
-      bool ROCKET_MODE = false;
-      bool DOCKING_MODE = false;
-      bool EVA_MODE = false;
-      bool PRECISION = true;
-      bool PlANE_MODE = true;
-      bool ROVER_MODE = false;
+      ROCKET_MODE = false;
+      DOCKING_MODE = false;
+      EVA_MODE = false;
+      PRECISION = true;
+      PlANE_MODE = true;
+      ROVER_MODE = false;
+      roverReverseMode = false;  // Reset when exiting rover mode
 
     } else if (POT_CONTROL_VALUE >= 680 && POT_CONTROL_VALUE < 850) {
       
       setLED(LED_EVA_MODE, true);
-      bool ROCKET_MODE = false;
-      bool DOCKING_MODE = false;
-      bool EVA_MODE = true;
-      bool PRECISION = false;
-      bool PlANE_MODE = true;
-      bool ROVER_MODE = false;
+      ROCKET_MODE = false;
+      DOCKING_MODE = false;
+      EVA_MODE = true;
+      PRECISION = false;
+      PlANE_MODE = true;
+      ROVER_MODE = false;
+      roverReverseMode = false;  // Reset when exiting rover mode
       
      
     } else if (POT_CONTROL_VALUE >= 920 && POT_CONTROL_VALUE < 1024) {
       
       setLED(LED_DOCKING_MODE, true);
-      bool ROCKET_MODE = false;
-      bool DOCKING_MODE = true;
-      bool EVA_MODE = false;
-      bool PRECISION = false;
-      bool PlANE_MODE = true;
-      bool ROVER_MODE = false;
+      ROCKET_MODE = false;
+      DOCKING_MODE = true;
+      EVA_MODE = false;
+      PRECISION = false;
+      PlANE_MODE = true;
+      ROVER_MODE = false;
+      roverReverseMode = false;  // Reset when exiting rover mode
       
     } 
   }
