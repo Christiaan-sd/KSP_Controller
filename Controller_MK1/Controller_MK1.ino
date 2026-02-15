@@ -1581,8 +1581,8 @@ void sendRotationCommands() {
     }
 
     int16_t roll = 0;
-    if (ROVER_MODE) {
-      // In rover mode, use YAW axis for roll rotation
+    if (ROVER_MODE || ROCKET_MODE) {
+      // In rover/rocket mode, use YAW axis for roll rotation
       if (readingYaw > (512 + DEADZONE)) {
         roll = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
       } else if (readingYaw < (512 - DEADZONE)) {
@@ -1598,8 +1598,8 @@ void sendRotationCommands() {
     }
 
     int16_t yaw = 0;
-    // In rover mode, use roll for yaw rotation. Otherwise skip yaw.
-    if (ROVER_MODE) {
+    // In rover/rocket mode, use roll axis for yaw rotation. Otherwise use yaw axis.
+    if (ROVER_MODE || ROCKET_MODE) {
       if (readingRoll > (512 + DEADZONE)) {
         yaw = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MAX);
       } else if (readingRoll < (512 - DEADZONE)) {
