@@ -308,6 +308,14 @@ bool PlANE_MODE = false;
 bool ROVER_MODE = false;
 bool roverReverseMode = false;  // Rover gearshift: false = forward, true = reverse
 
+// SAS animation variables
+bool sasAnimationActive = false;
+unsigned long sasAnimationStartTime = 0;
+const unsigned long SAS_ANIMATION_DURATION = 3000;  // 3 seconds for animation
+int sasAnimationIndex = 0;
+unsigned long lastSASAnimationUpdate = 0;
+const unsigned long SAS_ANIMATION_STEP = 100;  // Update every 100ms
+
 int readingPitchTrim = 0;
 int readingYawTrim = 0;
 int readingRollTrim = 0;
@@ -350,6 +358,7 @@ void sendCameraCommands();
 void sendTranslationCommands();
 void sendRotationCommands();
 void sendWheelCommands();
+void updateSASAnimation(unsigned long now);
 void messageHandler(byte messageType, byte msg[], byte msgSize);
 
 
@@ -443,6 +452,7 @@ void loop() {
   handleLCDButtons(now);
   handleJoystickButtons(now);
   handleTempAlarm();
+  updateSASAnimation(now);
   SAS_mode_pot();
   Control_mode_pot();
   LEDS_ALARM_PANEL();
@@ -618,16 +628,25 @@ void handleSwitches(unsigned long now) {
     lastDebounceTimeSASSwitch = now;
 
 
-    if (readingSASSwitch == LOW) {  // Button pressed
+    if (readingSASSwitch == LOW) {  // Button pressed - SAS OFF
       
     mySimpit.deactivateAction(SAS_ACTION);
     mySimpit.printToKSP("SAS Deactivated", PRINT_TO_SCREEN);
     setLED(LED_SAS, false);
+    
+    // Clear all SAS mode LEDs
+    clearSASModeLEDs();
+    sasAnimationActive = false;
 
-    } else {  // Button released
+    } else {  // Button released - SAS ON
     mySimpit.activateAction(SAS_ACTION);
     mySimpit.printToKSP("SAS Activated", PRINT_TO_SCREEN);
     setLED(LED_SAS, true);
+    
+    // Start animation
+    sasAnimationActive = true;
+    sasAnimationStartTime = now;
+    sasAnimationIndex = 0;
 
  
     }
@@ -1730,6 +1749,11 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
 }
 
 void SAS_mode_pot() {
+  // Don't update SAS mode while animation is playing
+  if (sasAnimationActive) {
+    return;
+  }
+
   // Read the potentiometer value (0 to 1023)
   int POT_SAS_VALUE = analogRead(POT_SAS_PIN);
   // Check if the potentiometer value has changed by more than 10
@@ -1739,45 +1763,56 @@ void SAS_mode_pot() {
 
     // Clear only the LEDs used in this function
     clearSASModeLEDs();
-
-    // Define custom potentiometer ranges for each LED and turn them on accordingly
-    if (POT_SAS_VALUE >= 0 && POT_SAS_VALUE < 10) {
-      setLED(LED_AUTO_PILOT, true);
-    } else if (POT_SAS_VALUE >= 10 && POT_SAS_VALUE < 95) {
-      setLED(LED_ANTI_NORMAL, true);
-      mySimpit.setSASMode(AP_ANTINORMAL);
-    } else if (POT_SAS_VALUE >= 95 && POT_SAS_VALUE < 195) {
-      setLED(LED_NORMAL, true);
-      mySimpit.setSASMode(AP_NORMAL);
-    } else if (POT_SAS_VALUE >= 195 && POT_SAS_VALUE < 310) {
-      setLED(LED_RETRO_GRADE, true);
-      mySimpit.setSASMode(AP_RETROGRADE);
-    } else if (POT_SAS_VALUE >= 310 && POT_SAS_VALUE < 420) {
-      setLED(LED_PRO_GRADE, true);
-      mySimpit.setSASMode(AP_PROGRADE);
-    } else if (POT_SAS_VALUE >= 420 && POT_SAS_VALUE < 507) {
-      setLED(LED_MANAUVER, true);
-      mySimpit.setSASMode(AP_MANEUVER);
-    } else if (POT_SAS_VALUE >= 507 && POT_SAS_VALUE < 600) {
-      setLED(LED_STABILITY_ASSIST, true);
-      mySimpit.setSASMode(AP_STABILITYASSIST);
-    } else if (POT_SAS_VALUE >= 600 && POT_SAS_VALUE < 690) {
-      setLED(LED_RADIAL_OUT, true);
-      mySimpit.setSASMode(AP_RADIALOUT);
-    } else if (POT_SAS_VALUE >= 690 && POT_SAS_VALUE < 790) {
-      setLED(LED_RADIAL_IN, true);
-      mySimpit.setSASMode(AP_RADIALIN);
-    } else if (POT_SAS_VALUE >= 790 && POT_SAS_VALUE < 875) {
-      setLED(LED_TARGET, true);
-      mySimpit.setSASMode(AP_TARGET);
-    } else if (POT_SAS_VALUE >= 875 && POT_SAS_VALUE < 975) {
-      setLED(LED_ANTI_TARGET, true);
-      mySimpit.setSASMode(AP_ANTITARGET);
-    } else if (POT_SAS_VALUE >= 975 && POT_SAS_VALUE < 1024) {
-      setLED(LED_NAVIGATION, true);
-      mySimpit.printToKSP(F("Navigation"), PRINT_TO_SCREEN);
-    }
+    setSASModeLED(POT_SAS_VALUE);
   }
+}
+
+// Helper function to set SAS mode LED based on potentiometer value
+void setSASModeLED(int POT_SAS_VALUE) {
+  // Define custom potentiometer ranges for each LED and turn them on accordingly
+  if (POT_SAS_VALUE >= 0 && POT_SAS_VALUE < 10) {
+    setLED(LED_AUTO_PILOT, true);
+  } else if (POT_SAS_VALUE >= 10 && POT_SAS_VALUE < 95) {
+    setLED(LED_ANTI_NORMAL, true);
+    mySimpit.setSASMode(AP_ANTINORMAL);
+  } else if (POT_SAS_VALUE >= 95 && POT_SAS_VALUE < 195) {
+    setLED(LED_NORMAL, true);
+    mySimpit.setSASMode(AP_NORMAL);
+  } else if (POT_SAS_VALUE >= 195 && POT_SAS_VALUE < 310) {
+    setLED(LED_RETRO_GRADE, true);
+    mySimpit.setSASMode(AP_RETROGRADE);
+  } else if (POT_SAS_VALUE >= 310 && POT_SAS_VALUE < 420) {
+    setLED(LED_PRO_GRADE, true);
+    mySimpit.setSASMode(AP_PROGRADE);
+  } else if (POT_SAS_VALUE >= 420 && POT_SAS_VALUE < 507) {
+    setLED(LED_MANAUVER, true);
+    mySimpit.setSASMode(AP_MANEUVER);
+  } else if (POT_SAS_VALUE >= 507 && POT_SAS_VALUE < 600) {
+    setLED(LED_STABILITY_ASSIST, true);
+    mySimpit.setSASMode(AP_STABILITYASSIST);
+  } else if (POT_SAS_VALUE >= 600 && POT_SAS_VALUE < 690) {
+    setLED(LED_RADIAL_OUT, true);
+    mySimpit.setSASMode(AP_RADIALOUT);
+  } else if (POT_SAS_VALUE >= 690 && POT_SAS_VALUE < 790) {
+    setLED(LED_RADIAL_IN, true);
+    mySimpit.setSASMode(AP_RADIALIN);
+  } else if (POT_SAS_VALUE >= 790 && POT_SAS_VALUE < 875) {
+    setLED(LED_TARGET, true);
+    mySimpit.setSASMode(AP_TARGET);
+  } else if (POT_SAS_VALUE >= 875 && POT_SAS_VALUE < 975) {
+    setLED(LED_ANTI_TARGET, true);
+    mySimpit.setSASMode(AP_ANTITARGET);
+  } else if (POT_SAS_VALUE >= 975 && POT_SAS_VALUE < 1024) {
+    setLED(LED_NAVIGATION, true);
+    mySimpit.printToKSP(F("Navigation"), PRINT_TO_SCREEN);
+  }
+}
+
+// Show current SAS mode (used after animation ends)
+void showCurrentSASMode() {
+  int POT_SAS_VALUE = analogRead(POT_SAS_PIN);
+  clearSASModeLEDs();
+  setSASModeLED(POT_SAS_VALUE);
 }
 
 void Control_mode_pot() {
@@ -2002,6 +2037,73 @@ void LEDS_ALARM_PANEL(){
     setLED(LED_RECOVER,false);
   } 
 
+}
+
+// SAS Mode LEDs array (in order for wave animation)
+const int SASmodeCount = 12;
+const int SASmodeLEDs[SASmodeCount] = {
+  LED_AUTO_PILOT,
+  LED_ANTI_NORMAL,
+  LED_NORMAL,
+  LED_RETRO_GRADE,
+  LED_PRO_GRADE,
+  LED_MANAUVER,
+  LED_STABILITY_ASSIST,
+  LED_RADIAL_OUT,
+  LED_RADIAL_IN,
+  LED_TARGET,
+  LED_ANTI_TARGET,
+  LED_NAVIGATION
+};
+
+// Update SAS animation - wave effect when SAS is activated
+void updateSASAnimation(unsigned long now) {
+  if (!sasAnimationActive) {
+    return;
+  }
+
+  unsigned long elapsedTime = now - sasAnimationStartTime;
+
+  // Check if animation should continue or end
+  if (elapsedTime > SAS_ANIMATION_DURATION) {
+    // Animation complete, turn off animation and show selected SAS mode
+    sasAnimationActive = false;
+    clearSASModeLEDs();
+    showCurrentSASMode();  // Show the currently selected SAS mode LED
+    return;
+  }
+
+  // Update animation LEDs based on elapsed time
+  if (now - lastSASAnimationUpdate >= SAS_ANIMATION_STEP) {
+    lastSASAnimationUpdate = now;
+
+    // Calculate animation progress (0.0 to 1.0)
+    float progress = (float)elapsedTime / SAS_ANIMATION_DURATION;
+
+    // Clear all SAS mode LEDs first
+    clearSASModeLEDs();
+
+    // Wave animation: smooth sweep from left to right and back
+    float wavePosition;
+    
+    if (progress < 0.5) {
+      // Left to right: progress 0.0-0.5 maps to position 0.0-1.0
+      wavePosition = progress * 2.0;
+    } else {
+      // Right to left: progress 0.5-1.0 maps to position 1.0-0.0
+      wavePosition = (1.0 - progress) * 2.0;
+    }
+
+    // Calculate which LEDs should be lit
+    // wavePosition goes from 0.0 to 1.0
+    int ledIndex = (int)(wavePosition * (SASmodeCount - 1));
+    ledIndex = constrain(ledIndex, 0, SASmodeCount - 1);
+
+    // Light up LEDs up to wave position (smooth fade effect)
+    for (int i = 0; i <= ledIndex; i++) {
+      setLED(SASmodeLEDs[i], true);
+    }
+  }
 }
 
 
