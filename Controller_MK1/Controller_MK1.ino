@@ -316,6 +316,11 @@ int sasAnimationIndex = 0;
 unsigned long lastSASAnimationUpdate = 0;
 const unsigned long SAS_ANIMATION_STEP = 100;  // Update every 100ms
 
+// Alarm thresholds (ratio of remaining resource)
+const float LOW_ELECTRICITY_THRESHOLD = 0.10f;
+const float LOW_FUEL_THRESHOLD = 0.10f;  // Uses deltaV as proxy
+float maxTotalDeltaVSeen = 0.0f;
+
 int readingPitchTrim = 0;
 int readingYawTrim = 0;
 int readingRollTrim = 0;
@@ -359,6 +364,8 @@ void sendTranslationCommands();
 void sendRotationCommands();
 void sendWheelCommands();
 void updateSASAnimation(unsigned long now);
+int getSASModeIndexFromPot(int POT_SAS_VALUE);
+void updateAlarmLEDs(unsigned long now);
 void messageHandler(byte messageType, byte msg[], byte msgSize);
 
 
@@ -456,6 +463,7 @@ void loop() {
   SAS_mode_pot();
   Control_mode_pot();
   LEDS_ALARM_PANEL();
+  updateAlarmLEDs(now);
   
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
@@ -1695,6 +1703,9 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
     case DELTAV_MESSAGE:
       if (msgSize == sizeof(deltaVMessage)) {
         myDeltaV = parseMessage<deltaVMessage>(msg);
+        if (myDeltaV.totalDeltaV > maxTotalDeltaVSeen) {
+          maxTotalDeltaVSeen = myDeltaV.totalDeltaV;
+        }
       }
       break;
     case VELOCITY_MESSAGE:
@@ -1805,6 +1816,35 @@ void setSASModeLED(int POT_SAS_VALUE) {
   } else if (POT_SAS_VALUE >= 975 && POT_SAS_VALUE < 1024) {
     setLED(LED_NAVIGATION, true);
     mySimpit.printToKSP(F("Navigation"), PRINT_TO_SCREEN);
+  }
+}
+
+// Helper function to map potentiometer value to SAS mode LED index
+int getSASModeIndexFromPot(int POT_SAS_VALUE) {
+  if (POT_SAS_VALUE >= 0 && POT_SAS_VALUE < 10) {
+    return 0;  // LED_AUTO_PILOT
+  } else if (POT_SAS_VALUE >= 10 && POT_SAS_VALUE < 95) {
+    return 1;  // LED_ANTI_NORMAL
+  } else if (POT_SAS_VALUE >= 95 && POT_SAS_VALUE < 195) {
+    return 2;  // LED_NORMAL
+  } else if (POT_SAS_VALUE >= 195 && POT_SAS_VALUE < 310) {
+    return 3;  // LED_RETRO_GRADE
+  } else if (POT_SAS_VALUE >= 310 && POT_SAS_VALUE < 420) {
+    return 4;  // LED_PRO_GRADE
+  } else if (POT_SAS_VALUE >= 420 && POT_SAS_VALUE < 507) {
+    return 5;  // LED_MANAUVER
+  } else if (POT_SAS_VALUE >= 507 && POT_SAS_VALUE < 600) {
+    return 6;  // LED_STABILITY_ASSIST
+  } else if (POT_SAS_VALUE >= 600 && POT_SAS_VALUE < 690) {
+    return 7;  // LED_RADIAL_OUT
+  } else if (POT_SAS_VALUE >= 690 && POT_SAS_VALUE < 790) {
+    return 8;  // LED_RADIAL_IN
+  } else if (POT_SAS_VALUE >= 790 && POT_SAS_VALUE < 875) {
+    return 9;  // LED_TARGET
+  } else if (POT_SAS_VALUE >= 875 && POT_SAS_VALUE < 975) {
+    return 10; // LED_ANTI_TARGET
+  } else {
+    return 11; // LED_NAVIGATION
   }
 }
 
@@ -2039,6 +2079,54 @@ void LEDS_ALARM_PANEL(){
 
 }
 
+// Animate alarm LEDs without blocking
+void updateAlarmLEDs(unsigned long now) {
+  bool tempAlarmActive = (myTemplimits.skinTempLimitPercentage > 40 || myTemplimits.tempLimitPercentage > 40);
+
+  bool lowElectricActive = false;
+  if (myElectric.total > 0) {
+    float electricRatio = myElectric.available / myElectric.total;
+    lowElectricActive = (electricRatio <= LOW_ELECTRICITY_THRESHOLD);
+  }
+
+  bool lowFuelActive = false;
+  if (maxTotalDeltaVSeen > 0) {
+    float fuelRatio = myDeltaV.totalDeltaV / maxTotalDeltaVSeen;
+    lowFuelActive = (fuelRatio <= LOW_FUEL_THRESHOLD);
+  }
+
+  bool anyAlarm = tempAlarmActive || lowElectricActive || lowFuelActive;
+
+  if (anyAlarm) {
+    bool masterOn = ((now / 250) % 2) == 0;
+    setLED(LED_MASTER_ALARM, masterOn);
+  } else {
+    setLED(LED_MASTER_ALARM, false);
+  }
+
+  if (tempAlarmActive) {
+    unsigned long phase = now % 1000;
+    bool tempOn = (phase < 120) || (phase >= 200 && phase < 320);
+    setLED(LED_TEMPRATURE, tempOn);
+  } else {
+    setLED(LED_TEMPRATURE, false);
+  }
+
+  if (lowElectricActive) {
+    bool elecOn = ((now / 500) % 2) == 0;
+    setLED(LED_LOW_ELECTRICITY, elecOn);
+  } else {
+    setLED(LED_LOW_ELECTRICITY, false);
+  }
+
+  if (lowFuelActive) {
+    bool fuelOn = ((now / 700) % 2) == 0;
+    setLED(LED_LOW_FUEL, fuelOn);
+  } else {
+    setLED(LED_LOW_FUEL, false);
+  }
+}
+
 // SAS Mode LEDs array (in order for wave animation)
 const int SASmodeCount = 12;
 const int SASmodeLEDs[SASmodeCount] = {
@@ -2099,10 +2187,16 @@ void updateSASAnimation(unsigned long now) {
     int ledIndex = (int)(wavePosition * (SASmodeCount - 1));
     ledIndex = constrain(ledIndex, 0, SASmodeCount - 1);
 
+    // Always keep the selected mode LED on during the wave
+    int targetIndex = getSASModeIndexFromPot(analogRead(POT_SAS_PIN));
+
     // Light up LEDs up to wave position (smooth fade effect)
     for (int i = 0; i <= ledIndex; i++) {
       setLED(SASmodeLEDs[i], true);
     }
+
+    // Ensure selected mode stays on even when the wave passes it
+    setLED(SASmodeLEDs[targetIndex], true);
   }
 }
 
