@@ -1581,20 +1581,34 @@ void sendRotationCommands() {
     }
 
     int16_t roll = 0;
-    if (readingRoll > (512 + DEADZONE)) {
-      roll = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MAX);
-    } else if (readingRoll < (512 - DEADZONE)) {
-      roll = map(readingRoll, 0, 512 - DEADZONE, INT16_MIN, 0);
+    if (ROVER_MODE) {
+      // In rover mode, use YAW axis for roll rotation
+      if (readingYaw > (512 + DEADZONE)) {
+        roll = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
+      } else if (readingYaw < (512 - DEADZONE)) {
+        roll = map(readingYaw, 0, 512 - DEADZONE, INT16_MIN, 0);
+      }
+    } else {
+      // Normal mode: use ROLL axis for roll
+      if (readingRoll > (512 + DEADZONE)) {
+        roll = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MAX);
+      } else if (readingRoll < (512 - DEADZONE)) {
+        roll = map(readingRoll, 0, 512 - DEADZONE, INT16_MIN, 0);
+      }
     }
 
     int16_t yaw = 0;
-    // Skip yaw in ROVER_MODE since it's used for wheel steering
-    if (!ROVER_MODE) {
-      if (readingYaw > (512 + DEADZONE)) {
-        yaw = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
-      } else if (readingYaw < (512 - DEADZONE)) {
-        yaw = map(readingYaw, 0, 512 - DEADZONE, INT16_MIN, 0);
+    // In rover mode, use roll for yaw rotation. Otherwise skip yaw.
+    if (ROVER_MODE) {
+      if (readingRoll > (512 + DEADZONE)) {
+        yaw = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MAX);
+      } else if (readingRoll < (512 - DEADZONE)) {
+        yaw = map(readingRoll, 0, 512 - DEADZONE, INT16_MIN, 0);
       }
+    } else if (readingYaw > (512 + DEADZONE)) {
+      yaw = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MAX);
+    } else if (readingYaw < (512 - DEADZONE)) {
+      yaw = map(readingYaw, 0, 512 - DEADZONE, INT16_MIN, 0);
     }
 
     rotMsg.setPitch(pitch);
@@ -1607,18 +1621,18 @@ void sendRotationCommands() {
 // Send wheel commands for rover mode
 void sendWheelCommands() {
   wheelMessage wheelMsg;
-  int readingYaw = analogRead(YAW_PIN);
+  int readingRoll = analogRead(ROLL_PIN);
 
-  // Add trim value for yaw
-  readingYaw += readingYawTrim;
-  readingYaw = constrain(readingYaw, 0, 1023);
+  // Add trim value for roll
+  readingRoll += readingRollTrim;
+  readingRoll = constrain(readingRoll, 0, 1023);
 
-  // Map yaw input to wheel steering (inverted)
+  // Map roll input to wheel steering
   int16_t steer = 0;
-  if (readingYaw > (512 + DEADZONE)) {
-    steer = map(readingYaw, 512 + DEADZONE, 1023, 0, INT16_MIN);  // Inverted
-  } else if (readingYaw < (512 - DEADZONE)) {
-    steer = map(readingYaw, 0, 512 - DEADZONE, INT16_MAX, 0);   // Inverted
+  if (readingRoll > (512 + DEADZONE)) {
+    steer = map(readingRoll, 512 + DEADZONE, 1023, 0, INT16_MIN);
+  } else if (readingRoll < (512 - DEADZONE)) {
+    steer = map(readingRoll, 0, 512 - DEADZONE, INT16_MAX, 0);
   }
 
   // Read throttle input for rover with gearshift
