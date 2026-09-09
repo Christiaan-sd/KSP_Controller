@@ -207,6 +207,21 @@ KerbalSimpit mySimpit(Serial);
 SerLCD lcd;
 bool isConnected = false;
 
+// Connection watchdog
+unsigned long lastInboundMessageTime = 0;
+unsigned long lastHeartbeatSent = 0;
+unsigned long lastReconnectAttempt = 0;
+const unsigned long HEARTBEAT_INTERVAL = 2000;  // Send an echo request this often
+const unsigned long CONNECTION_TIMEOUT  = 5000;  // No inbound traffic for this long = link lost
+const unsigned long RECONNECT_INTERVAL  = 2000;  // init() blocks ~1.1s on failure, so don't retry faster
+
+// Shift register batching: setLED() only marks bits dirty, the loop writes once
+bool shiftRegisterDirty = false;
+
+// Loop timing diagnostics (LCD screen 9)
+unsigned long loopTimeUs = 0;
+unsigned long loopTimeMaxUs = 0;
+
 unsigned long lastLCDUpdate = 0;
 
 // Variables to store the last debounce time
@@ -348,11 +363,12 @@ byte deltaChar[8] = {
   0b00000
 };
 
-byte AdvancedActionStatusMessage[10];
-
-
 // Function Prototypes
 void connectToKSP();
+void registerChannels();
+bool tryConnect();
+void checkConnection(unsigned long now);
+void flushLEDs();
 void handleJoystickButtons(unsigned long now);
 void handleSwitches(unsigned long now);
 void handleLCDButtons(unsigned long now);
@@ -452,29 +468,39 @@ void setup() {
 
 // Main loop function
 void loop() {
+  unsigned long loopStartUs = micros();
+
   mySimpit.update();
   unsigned long now = millis();
+
   handleSwitches(now);
   handleButtons(now);
+  mySimpit.update();
+
   handleLCDButtons(now);
   handleJoystickButtons(now);
   handleTempAlarm();
+  mySimpit.update();
+
   updateSASAnimation(now);
   SAS_mode_pot();
   Control_mode_pot();
   LEDS_ALARM_PANEL();
   updateAlarmLEDs(now);
-  
+
+  // All LED changes above only touched the state bytes. Write them out once.
+  flushLEDs();
+  mySimpit.update();
+
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
     updateLCD();
     lastLCDUpdate = now; // Update the last LCD update time
+    mySimpit.update();
   }
-  
-  // Reconnect if disconnected
-  if (!isConnected) {
-    connectToKSP();
-  }
-  
+
+  // Watchdog: detect a dead link and reconnect without blocking forever
+  checkConnection(now);
+
   // Send at each loop a message to control the throttle and the pitch/roll axis.
   sendRotationCommands();
   sendThrottleCommands();
@@ -491,19 +517,14 @@ void loop() {
     sendWheelCommands();
   }
 
+  loopTimeUs = micros() - loopStartUs;
+  if (loopTimeUs > loopTimeMaxUs) {
+    loopTimeMaxUs = loopTimeUs;
+  }
 }
 
-// Function to connect to Kerbal Space Program
-void connectToKSP() {
-  while (!mySimpit.init()) {
-    delay(100);
-  }
-  isConnected = true;
-  mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
-  lcd.clear();
-  lcd.print("CONNECTED!");
-
-  mySimpit.inboundHandler(messageHandler);
+// Subscribe to every channel this controller actually reads in messageHandler()
+void registerChannels() {
   mySimpit.registerChannel(AIRSPEED_MESSAGE);
   mySimpit.registerChannel(ALTITUDE_MESSAGE);
   mySimpit.registerChannel(VELOCITY_MESSAGE);
@@ -512,11 +533,59 @@ void connectToKSP() {
   mySimpit.registerChannel(DELTAV_MESSAGE);
   mySimpit.registerChannel(ATMO_CONDITIONS_MESSAGE);
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
-  mySimpit.registerChannel(ACTIONSTATUS_MESSAGE);
-  mySimpit.registerChannel(SAS_MODE_INFO_MESSAGE);
   mySimpit.registerChannel(FLIGHT_STATUS_MESSAGE);
-  mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
-  
+}
+
+// One handshake attempt. init() blocks up to ~1.1s when KSP does not answer.
+bool tryConnect() {
+  if (!mySimpit.init()) {
+    return false;
+  }
+
+  isConnected = true;
+  lastInboundMessageTime = millis();
+  lastHeartbeatSent = millis();
+
+  mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
+  mySimpit.inboundHandler(messageHandler);
+  registerChannels();
+
+  lcd.clear();
+  lcd.print("CONNECTED!");
+  return true;
+}
+
+// Function to connect to Kerbal Space Program (blocking, used at startup only)
+void connectToKSP() {
+  while (!tryConnect()) {
+    delay(100);
+  }
+}
+
+// Watchdog: KSP streams data continuously while subscribed, and answers echo
+// requests in any scene. No traffic at all for CONNECTION_TIMEOUT means the
+// link is gone (game closed, cable pulled, port reopened on a new session).
+void checkConnection(unsigned long now) {
+  if (isConnected) {
+    if (now - lastHeartbeatSent >= HEARTBEAT_INTERVAL) {
+      lastHeartbeatSent = now;
+      byte ping = 0;
+      mySimpit.send(ECHO_REQ_MESSAGE, ping);
+    }
+
+    if (now - lastInboundMessageTime > CONNECTION_TIMEOUT) {
+      isConnected = false;
+      lastReconnectAttempt = now;
+    }
+    return;
+  }
+
+  // Disconnected: retry the handshake at a fixed interval. Nothing else can
+  // work anyway, so the ~1.1s init() timeout is acceptable here.
+  if (now - lastReconnectAttempt >= RECONNECT_INTERVAL) {
+    lastReconnectAttempt = now;
+    tryConnect();
+  }
 }
 
 
@@ -1210,9 +1279,12 @@ void handleLCDButtons(unsigned long now) {
 
   // Handle the right button
   if (readingLCDSwitchPinRight == LOW && (now - lastDebounceTimeRight) > DEBOUNCE_DELAY) {
-    if (lcdScreenCase < 8) {
+    if (lcdScreenCase < 9) {
       lcdScreenCase++;
       lcdScreenCaseBeforeAlarm = lcdScreenCase;
+      if (lcdScreenCase == 9) {
+        loopTimeMaxUs = 0;  // Fresh peak measurement each time you open the screen
+      }
       lcd.clear(); // clear screen for new display info
       if (lcdAlarmState) {
         lcdAlarmStateOverride = false;
@@ -1274,6 +1346,15 @@ void handleTempAlarm() {
 
 // Function to update LCD display
 void updateLCD() {
+  // Link down takes over the display until the handshake succeeds again
+  if (!isConnected) {
+    lcd.setCursor(0, 0);
+    lcd.print("NO KSP LINK     ");
+    lcd.setCursor(0, 1);
+    lcd.print("Reconnecting... ");
+    return;
+  }
+
   switch (lcdScreenCase) {
     case 0:
       lcd.setCursor(0, 0);
@@ -1345,6 +1426,20 @@ void updateLCD() {
       lcd.setCursor(0, 0);
       lcd.print("Power ");
       lcd.print(myElectric.available);
+      break;
+    case 9:
+      // Diagnostics. Dropped should stay 0; if it climbs, the serial buffer is
+      // overflowing between simpit.update() calls. Loop shows current/peak in us.
+      lcd.setCursor(0, 0);
+      lcd.print("Dropped: ");
+      lcd.print(mySimpit.packetDroppedNbr);
+      lcd.print("    ");
+      lcd.setCursor(0, 1);
+      lcd.print("Lp ");
+      lcd.print(loopTimeUs);
+      lcd.print("/");
+      lcd.print(loopTimeMaxUs);
+      lcd.print("us   ");
       break;
     case 98:
       lcd.setCursor(0, 0);
@@ -1683,6 +1778,9 @@ void sendWheelCommands() {
 
 // Message handler for Kerbal Simpit
 void messageHandler(byte messageType, byte msg[], byte msgSize) {
+  // Any packet at all proves the link is alive (this includes ECHO_RESP_MESSAGE)
+  lastInboundMessageTime = millis();
+
   switch (messageType) {
     case ATMO_CONDITIONS_MESSAGE:
       if (msgSize == sizeof(atmoConditionsMessage)) {
@@ -1729,32 +1827,12 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
       }
       break;
 
-    case ACTIONSTATUS_MESSAGE:
-        if (msgSize == 1) {
-        bool game_SAS_State = msg[0] & SAS_ACTION;
-        
-      }
-      break;
-
     case FLIGHT_STATUS_MESSAGE: {
         if (msgSize == sizeof(flightStatusMessage)) {
           myFlightStatus = parseMessage<flightStatusMessage>(msg);
           LEDS_ALARM_PANEL();
         }
       } break;
-
-    case ADVANCED_ACTIONSTATUS_MESSAGE: {
-        if (msgSize == sizeof(advancedActionStatusMessage) )
-        {
-          advancedActionStatusMessage actionStatusMsg = parseMessage<advancedActionStatusMessage>(msg);
-          for(int i = 0; i < 10; i++) //There are 9 action groups (stage, gear, ...), they are listed in the AdvancedActionGroupIndexes enum. Some are only available for KSP2
-          {
-            AdvancedActionStatusMessage[i] = actionStatusMsg.getActionStatus(i);
-          }
-        }
-      } break;
-
-
   }
   
 }
@@ -1963,34 +2041,44 @@ void clearControlModeLEDs() {
 }
 
 // Function to set the state of a specific LED (on or off)
+// Sets a single LED bit. Does NOT touch the hardware: it only marks the
+// shift registers dirty so the loop can write all 32 bits out in one go.
 void setLED(int led, bool state) {
-  if (led < 8) {  // First shift register (LEDs 0-7)
-    if (state) {
-      ledStates1 |= (1 << led);   // Set bit to 1 (turn on)
-    } else {
-      ledStates1 &= ~(1 << led);  // Set bit to 0 (turn off)
-    }
-  } else if (led < 16) {  // Second shift register (LEDs 8-15)
-    int shiftRegisterLED = led - 8;
-    if (state) {
-      ledStates2 |= (1 << shiftRegisterLED);  // Set bit to 1 (turn on)
-    } else {
-      ledStates2 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
-    }
-  } else if (led < 24) {  // Third shift register (LEDs 16-23)
-    int shiftRegisterLED = led - 16;
-    if (state) {
-      ledStates3 |= (1 << shiftRegisterLED);  // Set bit to 1 (turn on)
-    } else {
-      ledStates3 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
-    }
-  } else {  // Fourth shift register (LEDs 24-31)
-    int shiftRegisterLED = led - 24;
-    if (state) {
-      ledStates4 |= (1 << shiftRegisterLED);  // Set bit to 1 (turn on)
-    } else {
-      ledStates4 &= ~(1 << shiftRegisterLED); // Set bit to 0 (turn off)
-    }
+  byte *target;
+  int bit;
+
+  if (led < 8) {           // First shift register (LEDs 0-7)
+    target = &ledStates1;
+    bit = led;
+  } else if (led < 16) {   // Second shift register (LEDs 8-15)
+    target = &ledStates2;
+    bit = led - 8;
+  } else if (led < 24) {   // Third shift register (LEDs 16-23)
+    target = &ledStates3;
+    bit = led - 16;
+  } else {                 // Fourth shift register (LEDs 24-31)
+    target = &ledStates4;
+    bit = led - 24;
+  }
+
+  byte before = *target;
+  if (state) {
+    *target |= (1 << bit);   // Set bit to 1 (turn on)
+  } else {
+    *target &= ~(1 << bit);  // Set bit to 0 (turn off)
+  }
+
+  // Only a real change is worth clocking out
+  if (*target != before) {
+    shiftRegisterDirty = true;
+  }
+}
+
+// Write the LED states to the hardware, but only if something changed.
+// Call this once per loop, after all setLED() calls.
+void flushLEDs() {
+  if (!shiftRegisterDirty) {
+    return;
   }
   updateShiftRegisters();
 }
@@ -2003,6 +2091,7 @@ void updateShiftRegisters() {
   shiftOut(DATA_PIN, CLOCK_PIN, ledStates2);  // Send data for SR2 (LEDs 9-16)
   shiftOut(DATA_PIN, CLOCK_PIN, ledStates1);  // Send data for SR1 (LEDs 1-8)
   digitalWrite(LATCH_PIN, HIGH);        // Latch the data (output to LEDs)
+  shiftRegisterDirty = false;
 }
 
 // Function to shift out data to the shift registers (74HC595)
