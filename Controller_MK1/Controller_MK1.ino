@@ -208,15 +208,59 @@ SerLCD lcd;
 bool isConnected = false;
 
 // Connection watchdog
+// Set to 1 to let the controller declare the link dead and re-handshake.
+// Set to 0 to only measure (heartbeat + diagnostics on LCD screen 9).
+// Left at 0: on this rig it produced spurious disconnects. Do not enable it
+// until screen 9 shows an Age peak that stays well under CONNECTION_TIMEOUT.
+#define LINK_WATCHDOG 0
+
 unsigned long lastInboundMessageTime = 0;
 unsigned long lastHeartbeatSent = 0;
 unsigned long lastReconnectAttempt = 0;
 const unsigned long HEARTBEAT_INTERVAL = 2000;  // Send an echo request this often
-const unsigned long CONNECTION_TIMEOUT  = 5000;  // No inbound traffic for this long = link lost
+const unsigned long CONNECTION_TIMEOUT  = 6000;  // Three missed heartbeats = link lost
 const unsigned long RECONNECT_INTERVAL  = 2000;  // init() blocks ~1.1s on failure, so don't retry faster
+
+// Set to true the first time KSP answers an echo request. Until that happens the
+// watchdog stays disarmed: outside the flight scene Simpit sends nothing at all,
+// so silence on its own is not proof of a dead link.
+bool echoSupported = false;
+
+// Largest gap ever seen between inbound packets, in ms. This is the number that
+// decides whether the watchdog can be trusted: it keeps counting even while the
+// link looks fine, so real gaps cannot hide.
+unsigned long ageMaxMs = 0;
+
+// Milliseconds since the last inbound packet. Always read millis() fresh here:
+// lastInboundMessageTime is updated from messageHandler part way through the
+// loop, so a cached "now" from the top of the loop can be older than it and the
+// unsigned subtraction would wrap to ~4294967295.
+unsigned long inboundAgeMs() {
+  unsigned long stamp = lastInboundMessageTime;
+  unsigned long current = millis();
+  if (current < stamp) {
+    return 0;
+  }
+  return current - stamp;
+}
 
 // Shift register batching: setLED() only marks bits dirty, the loop writes once
 bool shiftRegisterDirty = false;
+
+// DIAGNOSTIC SWITCH. Set to 0 to stop sending throttle/rotation/translation/
+// wheel entirely. The controller becomes useless for flying, but it isolates
+// whether the dropped packets are caused by what we transmit or purely by
+// what we receive. Set back to 1 afterwards.
+#define AXIS_SENDS 1
+
+// Axis command rate limit.
+// Throttle/rotation/translation/wheel are sent continuously, so they must be
+// capped: the loop runs thousands of times per second but the serial link only
+// carries ~11.5 kB/s. Sending every loop fills the TX buffer, blocks
+// Serial.write, and starves simpit.update() until inbound packets are corrupted.
+// 20 ms = 50 Hz, far more than enough for flight control.
+const unsigned long AXIS_SEND_INTERVAL = 20;
+unsigned long lastAxisSend = 0;
 
 // Loop timing diagnostics (LCD screen 9)
 unsigned long loopTimeUs = 0;
@@ -310,6 +354,18 @@ int lastActionGroup10ButtonState = HIGH;
 int LastSASModePotValue = 0;
 int LastControlModePotValue = 0;
 
+// The mode pots are compared by mode index, not by raw ADC value. A few counts
+// of ADC noise on a panel pot used to re-fire these every loop, and each firing
+// sent a printToKSP plus a setSASMode, which filled the TX buffer and blocked
+// Serial.write for a long time.
+int lastSASModeIndex = -1;
+int lastControlModeIndex = -1;
+
+// Per-section loop timing, shown on LCD screen 10.
+const int SECTION_COUNT = 6;
+unsigned long sectionMaxUs[SECTION_COUNT] = {0, 0, 0, 0, 0, 0};
+unsigned long sectionStartUs = 0;
+
 int lcdScreenCase = 0;
 int lcdScreenCaseBeforeAlarm = 0;
 bool lcdAlarmState = false;
@@ -369,6 +425,12 @@ void registerChannels();
 bool tryConnect();
 void checkConnection(unsigned long now);
 void flushLEDs();
+unsigned long inboundAgeMs();
+void lcdForceRedraw();
+void lcdShowNow(const char *a, const char *b);
+int getControlModeIndexFromPot(int POT_CONTROL_VALUE);
+void sectionBegin();
+void sectionEnd(int index);
 void handleJoystickButtons(unsigned long now);
 void handleSwitches(unsigned long now);
 void handleLCDButtons(unsigned long now);
@@ -393,7 +455,7 @@ void setup() {
   // Initialize LCD
   lcd.begin(Wire);
   lcd.setFastBacklight(255, 255, 255);
-  lcd.createChar(0, deltaChar); // Create the custom character
+  lcd.createChar(1, deltaChar); // Custom delta glyph, slot 1 (slot 0 would be a NUL in strings)
   Wire.setClock(400000); // Optional - set I2C SCL to High Speed Mode of 400kHz
   
   // Set pin modes
@@ -459,9 +521,8 @@ void setup() {
   lastSolarSwitchState = digitalRead(SOLAR_SWITCH);
   
   lcd.clear();
-  lcd.print("KSP CONTROLLER!");
-  lcd.setCursor(0, 1);
-  lcd.print("Ready to connect");
+  lcdForceRedraw();
+  lcdShowNow("KSP CONTROLLER!", "Ready to connect");
 
   connectToKSP();
 }
@@ -473,15 +534,20 @@ void loop() {
   mySimpit.update();
   unsigned long now = millis();
 
+  sectionBegin();
   handleSwitches(now);
   handleButtons(now);
+  sectionEnd(0);
   mySimpit.update();
 
+  sectionBegin();
   handleLCDButtons(now);
   handleJoystickButtons(now);
   handleTempAlarm();
+  sectionEnd(1);
   mySimpit.update();
 
+  sectionBegin();
   updateSASAnimation(now);
   SAS_mode_pot();
   Control_mode_pot();
@@ -490,36 +556,67 @@ void loop() {
 
   // All LED changes above only touched the state bytes. Write them out once.
   flushLEDs();
+  sectionEnd(2);
   mySimpit.update();
 
   if (now - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
+    sectionBegin();
     updateLCD();
+    sectionEnd(3);
     lastLCDUpdate = now; // Update the last LCD update time
     mySimpit.update();
   }
 
   // Watchdog: detect a dead link and reconnect without blocking forever
+  sectionBegin();
   checkConnection(now);
+  sectionEnd(4);
 
-  // Send at each loop a message to control the throttle and the pitch/roll axis.
-  sendRotationCommands();
-  sendThrottleCommands();
+  // Axis commands, rate limited. Camera and EVA keyboard messages are edge
+  // triggered elsewhere, so they are not throttled here.
+#if AXIS_SENDS
+  if (now - lastAxisSend >= AXIS_SEND_INTERVAL) {
+    lastAxisSend = now;
+    sectionBegin();
 
-  // Send either translation or camera commands based on the button state
-  if (translationButtonPressed) {
-    sendCameraCommands();
-  } else {
-    sendTranslationCommands();
+    sendRotationCommands();
+    sendThrottleCommands();
+
+    // Send either translation or camera commands based on the button state
+    if (translationButtonPressed) {
+      sendCameraCommands();
+    } else {
+      sendTranslationCommands();
+    }
+
+    // Send wheel commands if in ROVER_MODE
+    if (ROVER_MODE) {
+      sendWheelCommands();
+    }
+    sectionEnd(5);
   }
+#endif
 
-  // Send wheel commands if in ROVER_MODE
-  if (ROVER_MODE) {
-    sendWheelCommands();
+  unsigned long inboundAge = inboundAgeMs();
+  if (inboundAge > ageMaxMs) {
+    ageMaxMs = inboundAge;
   }
 
   loopTimeUs = micros() - loopStartUs;
   if (loopTimeUs > loopTimeMaxUs) {
     loopTimeMaxUs = loopTimeUs;
+  }
+}
+
+// Loop section timing helpers. Sections do not nest, so one start stamp is enough.
+void sectionBegin() {
+  sectionStartUs = micros();
+}
+
+void sectionEnd(int index) {
+  unsigned long elapsed = micros() - sectionStartUs;
+  if (elapsed > sectionMaxUs[index]) {
+    sectionMaxUs[index] = elapsed;
   }
 }
 
@@ -551,7 +648,7 @@ bool tryConnect() {
   registerChannels();
 
   lcd.clear();
-  lcd.print("CONNECTED!");
+  lcdShowNow("CONNECTED!", "");
   return true;
 }
 
@@ -562,9 +659,9 @@ void connectToKSP() {
   }
 }
 
-// Watchdog: KSP streams data continuously while subscribed, and answers echo
-// requests in any scene. No traffic at all for CONNECTION_TIMEOUT means the
-// link is gone (game closed, cable pulled, port reopened on a new session).
+// Watchdog: KSP answers echo requests in any scene, so a heartbeat every couple
+// of seconds should keep traffic flowing even when no flight data is streaming.
+// The timeout only counts once an echo has actually come back at least once.
 void checkConnection(unsigned long now) {
   if (isConnected) {
     if (now - lastHeartbeatSent >= HEARTBEAT_INTERVAL) {
@@ -573,10 +670,15 @@ void checkConnection(unsigned long now) {
       mySimpit.send(ECHO_REQ_MESSAGE, ping);
     }
 
-    if (now - lastInboundMessageTime > CONNECTION_TIMEOUT) {
+#if LINK_WATCHDOG
+    // Only conclude the link is dead if echo is proven to work. Without a
+    // working echo, silence means nothing: most Simpit channels only send
+    // inside the flight scene, and some only on change.
+    if (echoSupported && inboundAgeMs() > CONNECTION_TIMEOUT) {
       isConnected = false;
       lastReconnectAttempt = now;
     }
+#endif
     return;
   }
 
@@ -1279,20 +1381,25 @@ void handleLCDButtons(unsigned long now) {
 
   // Handle the right button
   if (readingLCDSwitchPinRight == LOW && (now - lastDebounceTimeRight) > DEBOUNCE_DELAY) {
-    if (lcdScreenCase < 9) {
+    if (lcdScreenCase < 10) {
       lcdScreenCase++;
       lcdScreenCaseBeforeAlarm = lcdScreenCase;
       if (lcdScreenCase == 9) {
         loopTimeMaxUs = 0;  // Fresh peak measurement each time you open the screen
       }
-      lcd.clear(); // clear screen for new display info
+      if (lcdScreenCase == 10) {
+        for (int i = 0; i < SECTION_COUNT; i++) {
+          sectionMaxUs[i] = 0;  // Fresh per-section measurement
+        }
+      }
+      lcdForceRedraw(); // full 32 char redraw overwrites the old screen, no clear needed
       if (lcdAlarmState) {
         lcdAlarmStateOverride = false;
         lcdAlarmState = false;
         setLED(LED_MASTER_ALARM, false);
         setLED(LED_TEMPRATURE, false);
         lcdScreenCase = 0;
-        lcd.clear();
+        lcdForceRedraw();
         lcd.setBacklight(255, 255, 255);
       }
     }
@@ -1304,14 +1411,14 @@ void handleLCDButtons(unsigned long now) {
     if (lcdScreenCase > 0) {
       lcdScreenCase--;
       lcdScreenCaseBeforeAlarm = lcdScreenCase;
-      lcd.clear(); // clear screen for new display info
+      lcdForceRedraw(); // full 32 char redraw overwrites the old screen, no clear needed
       if (lcdAlarmState) {
         lcdAlarmStateOverride = true;
         lcdAlarmState = false;
         setLED(LED_MASTER_ALARM, false);
         setLED(LED_TEMPRATURE, false);
         lcdScreenCase = 0;
-        lcd.clear();
+        lcdForceRedraw();
         lcd.setBacklight(255, 255, 255);
       }
     }
@@ -1329,7 +1436,7 @@ void handleTempAlarm() {
       setLED(LED_MASTER_ALARM, true);
       setLED(LED_TEMPRATURE, true);
       lcd.setBacklight(255, 0, 0);
-      lcd.clear();
+      lcdForceRedraw();
     }
   } else {
     if (lcdAlarmState) {
@@ -1339,117 +1446,144 @@ void handleTempAlarm() {
       setLED(LED_MASTER_ALARM, false);
       setLED(LED_TEMPRATURE, false);
       lcd.setBacklight(255, 255, 255);
-      lcd.clear();
+      lcdForceRedraw();
     }
   }
 }
 
+// LCD rendering.
+// The SerLCD library blocks: every print() ends with delay(10) and every
+// setCursor() with delay(50). A screen built from six print calls therefore
+// costs well over 100ms of frozen loop. So both rows are composed into one
+// 32 character buffer, sent with a single print, and skipped entirely when
+// nothing changed since the last redraw.
+char lcdBuf[33];
+char lcdShown[33];
+char lcdRowA[17];
+char lcdRowB[17];
+char lcdNumA[16];
+char lcdNumB[16];
+
+// Force the next updateLCD() to redraw, e.g. after lcd.clear() wiped the panel
+void lcdForceRedraw() {
+  lcdShown[0] = '\0';
+}
+
+void lcdSetLines(const char *a, const char *b) {
+  snprintf(lcdBuf, sizeof(lcdBuf), "%-16.16s%-16.16s", a, b);
+}
+
+// The SerLCD wraps text from the end of row 0 to the start of row 1, and from
+// the end of row 1 back to the start of row 0. Writing exactly 32 characters
+// therefore leaves the cursor where it began and setCursor() is never needed,
+// which saves its 50ms delay. Every write in this sketch goes through here, so
+// the cursor stays on that 32 character grid.
+// Set to 0 if the display turns out not to wrap: then each redraw costs 50ms
+// more but the position is set explicitly.
+#define LCD_ASSUME_WRAP 1
+
+void lcdCommit() {
+  if (strcmp(lcdBuf, lcdShown) == 0) {
+    return;  // Nothing changed, no I2C traffic and no library delays at all
+  }
+  strcpy(lcdShown, lcdBuf);
+#if !LCD_ASSUME_WRAP
+  lcd.setCursor(0, 0);
+#endif
+  lcd.print(lcdBuf);
+}
+
+// Write a screen immediately, bypassing the change check. Used for the boot and
+// connection messages so they also land on the 32 character grid.
+void lcdShowNow(const char *a, const char *b) {
+  lcdSetLines(a, b);
+  lcdForceRedraw();
+  lcdCommit();
+}
+
 // Function to update LCD display
 void updateLCD() {
-  // Link down takes over the display until the handshake succeeds again
-  if (!isConnected) {
-    lcd.setCursor(0, 0);
-    lcd.print("NO KSP LINK     ");
-    lcd.setCursor(0, 1);
-    lcd.print("Reconnecting... ");
-    return;
-  }
-
   switch (lcdScreenCase) {
     case 0:
-      lcd.setCursor(0, 0);
-      lcd.print("MACH: ");
-      lcd.print(myAirspeed.mach);
-      lcd.setCursor(0, 1);
-      lcd.print("Airspeed: ");
-      lcd.print(round(myAirspeed.IAS));
+      dtostrf(myAirspeed.mach, 0, 2, lcdNumA);
+      snprintf(lcdRowA, sizeof(lcdRowA), "MACH: %s", lcdNumA);
+      snprintf(lcdRowB, sizeof(lcdRowB), "Airspeed: %ld", (long)round(myAirspeed.IAS));
       break;
     case 1:
-      lcd.setCursor(0, 0);
-      lcd.print("Sealevel: ");
-      lcd.print(round(myAltitude.sealevel));
-      lcd.setCursor(0, 1);
-      lcd.print("Surface: ");
-      lcd.print(round(myAltitude.surface));
+      snprintf(lcdRowA, sizeof(lcdRowA), "Sealevel: %ld", (long)round(myAltitude.sealevel));
+      snprintf(lcdRowB, sizeof(lcdRowB), "Surface: %ld", (long)round(myAltitude.surface));
       break;
     case 2:
-      lcd.setCursor(0, 0);
-      lcd.print("m/s: ");
-      lcd.print(round(myVelocity.surface));
-      lcd.setCursor(0, 1);
-      lcd.print("km/h: ");
-      lcd.print(round((myVelocity.surface * 3.6)));
+      snprintf(lcdRowA, sizeof(lcdRowA), "m/s: %ld", (long)round(myVelocity.surface));
+      snprintf(lcdRowB, sizeof(lcdRowB), "km/h: %ld", (long)round(myVelocity.surface * 3.6));
       break;
     case 3:
-      lcd.setCursor(0, 0);
-      lcd.print("Heading: ");
-      lcd.print(myRotation.heading);
-      lcd.setCursor(0, 1);
-      lcd.print("Pitch: ");
-      lcd.print(myRotation.pitch);
+      dtostrf(myRotation.heading, 0, 2, lcdNumA);
+      dtostrf(myRotation.pitch, 0, 2, lcdNumB);
+      snprintf(lcdRowA, sizeof(lcdRowA), "Heading: %s", lcdNumA);
+      snprintf(lcdRowB, sizeof(lcdRowB), "Pitch: %s", lcdNumB);
       break;
     case 4:
-      lcd.setCursor(0, 0);
-      lcd.print("Part Temp %");
-      lcd.print(myTemplimits.tempLimitPercentage);
-      lcd.setCursor(0, 1);
-      lcd.print("Skin Temp %");
-      lcd.print(myTemplimits.skinTempLimitPercentage);
+      snprintf(lcdRowA, sizeof(lcdRowA), "Part Temp %%%d", myTemplimits.tempLimitPercentage);
+      snprintf(lcdRowB, sizeof(lcdRowB), "Skin Temp %%%d", myTemplimits.skinTempLimitPercentage);
       break;
     case 5:
-      lcd.setCursor(0, 0);
-      lcd.write(byte(0)); // Write the custom Delta character
-      lcd.print("V Stage ");
-      lcd.print(round(myDeltaV.stageDeltaV));
-      lcd.setCursor(0, 1);
-      lcd.write(byte(0)); // Write the custom Delta character
-      lcd.print("V Ship ");
-      lcd.print(round(myDeltaV.totalDeltaV));
+      // \x01 is the custom delta glyph, registered as character 1 in setup().
+      // It cannot be character 0, because a zero byte would end the string.
+      snprintf(lcdRowA, sizeof(lcdRowA), "\x01V Stage %ld", (long)round(myDeltaV.stageDeltaV));
+      snprintf(lcdRowB, sizeof(lcdRowB), "\x01V Ship %ld", (long)round(myDeltaV.totalDeltaV));
       break;
     case 6:
-      lcd.setCursor(0, 0);
-      lcd.print("Air Temp ");
-      lcd.print(myAtmoConditions.temperature - 273.15);
-      lcd.setCursor(0, 1);
-      lcd.print("Air Density ");
-      lcd.print(myAtmoConditions.airDensity);
+      dtostrf(myAtmoConditions.temperature - 273.15, 0, 2, lcdNumA);
+      dtostrf(myAtmoConditions.airDensity, 0, 2, lcdNumB);
+      snprintf(lcdRowA, sizeof(lcdRowA), "Air Temp %s", lcdNumA);
+      snprintf(lcdRowB, sizeof(lcdRowB), "Air Dens %s", lcdNumB);
       break;
     case 7:
-      lcd.setCursor(0, 0);
-      lcd.print("Air Pres ");
-      lcd.print(myAtmoConditions.pressure);
-      lcd.setCursor(0, 1);
-      lcd.print("G-Forces  ");
-      lcd.print(myAirspeed.gForces);
+      dtostrf(myAtmoConditions.pressure, 0, 2, lcdNumA);
+      dtostrf(myAirspeed.gForces, 0, 2, lcdNumB);
+      snprintf(lcdRowA, sizeof(lcdRowA), "Air Pres %s", lcdNumA);
+      snprintf(lcdRowB, sizeof(lcdRowB), "G-Forces %s", lcdNumB);
       break;
     case 8:
-      lcd.setCursor(0, 0);
-      lcd.print("Power ");
-      lcd.print(myElectric.available);
+      dtostrf(myElectric.available, 0, 2, lcdNumA);
+      snprintf(lcdRowA, sizeof(lcdRowA), "Power %s", lcdNumA);
+      lcdRowB[0] = '\0';
       break;
     case 9:
-      // Diagnostics. Dropped should stay 0; if it climbs, the serial buffer is
-      // overflowing between simpit.update() calls. Loop shows current/peak in us.
-      lcd.setCursor(0, 0);
-      lcd.print("Dropped: ");
-      lcd.print(mySimpit.packetDroppedNbr);
-      lcd.print("    ");
-      lcd.setCursor(0, 1);
-      lcd.print("Lp ");
-      lcd.print(loopTimeUs);
-      lcd.print("/");
-      lcd.print(loopTimeMaxUs);
-      lcd.print("us   ");
+      // D       : corrupted inbound packets since boot.
+      // L       : peak loop time in us since this screen was opened.
+      // Age a/b : seconds since last inbound packet / largest gap ever seen.
+      // E       : does KSP answer echo heartbeats?
+      snprintf(lcdRowA, sizeof(lcdRowA), "D:%u L:%lu",
+               mySimpit.packetDroppedNbr, loopTimeMaxUs);
+      snprintf(lcdRowB, sizeof(lcdRowB), "Age:%lu/%lus E:%c",
+               inboundAgeMs() / 1000, ageMaxMs / 1000, echoSupported ? 'Y' : 'N');
       break;
+    case 10: {
+      // Which block of the loop is the slow one.
+      // S0 switches+buttons  S1 lcd buttons+joystick+temp alarm
+      // S2 pots+LEDs         S3 LCD redraw
+      // S4 connection        S5 axis sends
+      int worst = 0;
+      for (int i = 1; i < SECTION_COUNT; i++) {
+        if (sectionMaxUs[i] > sectionMaxUs[worst]) {
+          worst = i;
+        }
+      }
+      snprintf(lcdRowA, sizeof(lcdRowA), "Slowest: S%d", worst);
+      snprintf(lcdRowB, sizeof(lcdRowB), "%luus", sectionMaxUs[worst]);
+    } break;
     case 98:
-      lcd.setCursor(0, 0);
-      lcd.print("PART TEMP!: ");
-      lcd.print(myTemplimits.tempLimitPercentage);
-      lcd.setCursor(0, 1);
-      lcd.print("SKIN TEMP!: ");
-      lcd.print(myTemplimits.skinTempLimitPercentage);
+      snprintf(lcdRowA, sizeof(lcdRowA), "PART TEMP!: %d", myTemplimits.tempLimitPercentage);
+      snprintf(lcdRowB, sizeof(lcdRowB), "SKIN TEMP!: %d", myTemplimits.skinTempLimitPercentage);
       break;
+    default:
+      return;
   }
+
+  lcdSetLines(lcdRowA, lcdRowB);
+  lcdCommit();
 }
 
 // Function to send throttle commands
@@ -1782,6 +1916,11 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
   lastInboundMessageTime = millis();
 
   switch (messageType) {
+    case ECHO_RESP_MESSAGE:
+      // KSP answered a heartbeat, so the watchdog can be trusted from here on
+      echoSupported = true;
+      break;
+
     case ATMO_CONDITIONS_MESSAGE:
       if (msgSize == sizeof(atmoConditionsMessage)) {
         myAtmoConditions = parseMessage<atmoConditionsMessage>(msg);
@@ -1845,10 +1984,13 @@ void SAS_mode_pot() {
 
   // Read the potentiometer value (0 to 1023)
   int POT_SAS_VALUE = analogRead(POT_SAS_PIN);
-  // Check if the potentiometer value has changed by more than 10
-  if (abs(LastSASModePotValue - POT_SAS_VALUE) > 3) {
+
+  // Act on a change of mode, not on a change of raw value. ADC noise of a few
+  // counts would otherwise re-send setSASMode every single loop.
+  int index = getSASModeIndexFromPot(POT_SAS_VALUE);
+  if (index != lastSASModeIndex) {
+    lastSASModeIndex = index;
     LastSASModePotValue = POT_SAS_VALUE;
-    mySimpit.printToKSP(" update SAS MODE", PRINT_TO_SCREEN);
 
     // Clear only the LEDs used in this function
     clearSASModeLEDs();
@@ -1933,13 +2075,27 @@ void showCurrentSASMode() {
   setSASModeLED(POT_SAS_VALUE);
 }
 
+// Maps the control pot to a mode index. Index 5 is the gap between 850 and 919,
+// which deliberately selects no mode and clears the LEDs.
+int getControlModeIndexFromPot(int POT_CONTROL_VALUE) {
+  if (POT_CONTROL_VALUE < 170) return 0;
+  if (POT_CONTROL_VALUE < 340) return 1;
+  if (POT_CONTROL_VALUE < 510) return 2;
+  if (POT_CONTROL_VALUE < 680) return 3;
+  if (POT_CONTROL_VALUE < 850) return 4;
+  if (POT_CONTROL_VALUE < 920) return 5;
+  return 6;
+}
+
 void Control_mode_pot() {
   // Read the potentiometer value (0 to 1023)
   int POT_CONTROL_VALUE = analogRead(POT_CONTROL_PIN);
-  // Check if the potentiometer value has changed by more than 10
-  if (abs(LastControlModePotValue - POT_CONTROL_VALUE) > 3) {
+
+  // Act on a change of mode, not on a change of raw value
+  int index = getControlModeIndexFromPot(POT_CONTROL_VALUE);
+  if (index != lastControlModeIndex) {
+    lastControlModeIndex = index;
     LastControlModePotValue = POT_CONTROL_VALUE;
-    mySimpit.printToKSP(" update CONTROL MODE", PRINT_TO_SCREEN);
     
     // Clear only the LEDs used in this function
     clearControlModeLEDs();
