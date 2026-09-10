@@ -237,6 +237,8 @@ extern bool scienceAvailable;
 extern bool scienceLedState;
 extern unsigned long lastScienceBlink;
 extern const unsigned long SCIENCE_BLINK_INTERVAL;
+extern const float SCIENCE_BLINK_THRESHOLD;
+extern float potentialScience;
 
 // Milliseconds since the last inbound packet. Always read millis() fresh here:
 // lastInboundMessageTime is updated from messageHandler part way through the
@@ -257,7 +259,7 @@ void sendAdvancedAction(byte actionIndex, ActionGroupSettings setting) {
 }
 
 void updateScienceLED(unsigned long now) {
-  if (!scienceAvailable) {
+  if (potentialScience <= SCIENCE_BLINK_THRESHOLD) {
     scienceLedState = false;
     digitalWrite(LED_SCIENCE, LOW);
     return;
@@ -446,6 +448,12 @@ bool scienceAvailable = false;
 bool scienceLedState = false;
 unsigned long lastScienceBlink = 0;
 const unsigned long SCIENCE_BLINK_INTERVAL = 400;
+const float SCIENCE_BLINK_THRESHOLD = 5.0f;
+const unsigned long SCIENCE_RESET_HOLD_TIME = 3000;
+float potentialScience = 0.0f;
+unsigned long scienceButtonDownAt = 0;
+bool scienceResetSent = false;
+bool scienceScreenBacklight = false;
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -677,6 +685,7 @@ void registerChannels() {
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
   mySimpit.registerChannel(FLIGHT_STATUS_MESSAGE);
   mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
+  mySimpit.registerChannel(SCIENCE_VALUE_MESSAGE);
 }
 
 // One handshake attempt. init() blocks up to ~1.1s when KSP does not answer.
@@ -1028,15 +1037,29 @@ void handleButtons(unsigned long now) {
   int readingResetTrimButton = digitalRead(RESET_TRIM_BUTTON_PIN);
 
   //--------------------
-  // Check for state change and debounce for Science button
-  if (readingScienceButton != lastScienceButtonState && (now - lastDebounceTimeScienceButton) > DEBOUNCE_DELAY) {
-    if (readingScienceButton == LOW) {
-      scienceButtonPressed = !scienceButtonPressed;
-      mySimpit.printToKSP("Science button pressed", PRINT_TO_SCREEN);
-      sendAdvancedAction(ADVANCED_SCIENCE_ACTION, AG_ACTION_TOGGLE);
-     
-    }
+  // Short press collects science; holding the button for three seconds resets
+  // experiments so they can be run again where KSP permits it.
+  if (readingScienceButton != lastScienceButtonState &&
+      (now - lastDebounceTimeScienceButton) > DEBOUNCE_DELAY) {
     lastDebounceTimeScienceButton = now;
+    if (readingScienceButton == LOW) {
+      scienceButtonDownAt = now;
+      scienceResetSent = false;
+    } else if (!scienceResetSent) {
+      if (now - scienceButtonDownAt >= SCIENCE_RESET_HOLD_TIME) {
+        sendAdvancedAction(ADVANCED_SCIENCE_ACTION, AG_ACTION_DEACTIVATE);
+        mySimpit.printToKSP("Science experiments reset", PRINT_TO_SCREEN);
+      } else {
+        sendAdvancedAction(ADVANCED_SCIENCE_ACTION, AG_ACTION_TOGGLE);
+        mySimpit.printToKSP("Science collected", PRINT_TO_SCREEN);
+      }
+    }
+  }
+  if (readingScienceButton == LOW && !scienceResetSent &&
+      now - scienceButtonDownAt >= SCIENCE_RESET_HOLD_TIME) {
+    sendAdvancedAction(ADVANCED_SCIENCE_ACTION, AG_ACTION_DEACTIVATE);
+    scienceResetSent = true;
+    mySimpit.printToKSP("Science experiments reset", PRINT_TO_SCREEN);
   }
   lastScienceButtonState = readingScienceButton;
   //--------------------
@@ -1425,7 +1448,7 @@ void handleLCDButtons(unsigned long now) {
 
   // Handle the right button
   if (readingLCDSwitchPinRight == LOW && (now - lastDebounceTimeRight) > DEBOUNCE_DELAY) {
-    if (lcdScreenCase < 10) {
+    if (lcdScreenCase < 11) {
       lcdScreenCase++;
       lcdScreenCaseBeforeAlarm = lcdScreenCase;
       if (lcdScreenCase == 9) {
@@ -1618,6 +1641,12 @@ void updateLCD() {
       snprintf(lcdRowA, sizeof(lcdRowA), "Slowest: S%d", worst);
       snprintf(lcdRowB, sizeof(lcdRowB), "%luus", sectionMaxUs[worst]);
     } break;
+    case 11:
+      dtostrf(potentialScience, 0, 1, lcdNumA);
+      dtostrf(SCIENCE_BLINK_THRESHOLD, 0, 1, lcdNumB);
+      snprintf(lcdRowA, sizeof(lcdRowA), "Science: %s", lcdNumA);
+      snprintf(lcdRowB, sizeof(lcdRowB), "Blink > %s", lcdNumB);
+      break;
     case 98:
       snprintf(lcdRowA, sizeof(lcdRowA), "PART TEMP!: %d", myTemplimits.tempLimitPercentage);
       snprintf(lcdRowB, sizeof(lcdRowB), "SKIN TEMP!: %d", myTemplimits.skinTempLimitPercentage);
@@ -1627,6 +1656,13 @@ void updateLCD() {
   }
 
   lcdSetLines(lcdRowA, lcdRowB);
+  if (lcdScreenCase == 11 && !scienceScreenBacklight && !lcdAlarmState) {
+    lcd.setBacklight(255, 80, 0);
+    scienceScreenBacklight = true;
+  } else if (lcdScreenCase != 11 && scienceScreenBacklight) {
+    lcd.setBacklight(255, 255, 255);
+    scienceScreenBacklight = false;
+  }
   lcdCommit();
 }
 
@@ -2024,6 +2060,11 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
         radiatorStatus = myAdvancedActions.getActionStatus(ADVANCED_RADIATOR_ACTION);
         scienceStatus = myAdvancedActions.getActionStatus(ADVANCED_SCIENCE_ACTION);
         scienceAvailable = (scienceStatus == 1);
+      }
+      break;
+    case SCIENCE_VALUE_MESSAGE:
+      if (msgSize == sizeof(float)) {
+        memcpy(&potentialScience, msg, sizeof(float));
       }
       break;
   }
