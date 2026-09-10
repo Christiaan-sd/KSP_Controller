@@ -231,6 +231,13 @@ bool echoSupported = false;
 // link looks fine, so real gaps cannot hide.
 unsigned long ageMaxMs = 0;
 
+extern byte solarStatus;
+extern byte radiatorStatus;
+extern bool scienceAvailable;
+extern bool scienceLedState;
+extern unsigned long lastScienceBlink;
+extern const unsigned long SCIENCE_BLINK_INTERVAL;
+
 // Milliseconds since the last inbound packet. Always read millis() fresh here:
 // lastInboundMessageTime is updated from messageHandler part way through the
 // loop, so a cached "now" from the top of the loop can be older than it and the
@@ -242,6 +249,30 @@ unsigned long inboundAgeMs() {
     return 0;
   }
   return current - stamp;
+}
+
+void sendAdvancedAction(byte actionIndex, ActionGroupSettings setting) {
+  setSingleActionGroupMessage action(actionIndex, setting);
+  mySimpit.send(SETSINGLE_AG_MESSAGE, action);
+}
+
+void updateScienceLED(unsigned long now) {
+  if (!scienceAvailable) {
+    scienceLedState = false;
+    digitalWrite(LED_SCIENCE, LOW);
+    return;
+  }
+
+  if (now - lastScienceBlink >= SCIENCE_BLINK_INTERVAL) {
+    lastScienceBlink = now;
+    scienceLedState = !scienceLedState;
+    digitalWrite(LED_SCIENCE, scienceLedState ? HIGH : LOW);
+  }
+}
+
+void updateAdvancedActionLEDs() {
+  digitalWrite(LED_SOLAR, solarStatus == 1 ? HIGH : LOW);
+  digitalWrite(LED_RADS, radiatorStatus == 1 ? HIGH : LOW);
 }
 
 // Shift register batching: setLED() only marks bits dirty, the loop writes once
@@ -406,6 +437,15 @@ tempLimitMessage myTemplimits;
 atmoConditionsMessage myAtmoConditions;
 resourceMessage myElectric;
 flightStatusMessage myFlightStatus;
+advancedActionStatusMessage myAdvancedActions;
+
+byte solarStatus = 0;
+byte radiatorStatus = 0;
+byte scienceStatus = 0;
+bool scienceAvailable = false;
+bool scienceLedState = false;
+unsigned long lastScienceBlink = 0;
+const unsigned long SCIENCE_BLINK_INTERVAL = 400;
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -445,6 +485,9 @@ void updateSASAnimation(unsigned long now);
 int getSASModeIndexFromPot(int POT_SAS_VALUE);
 void updateAlarmLEDs(unsigned long now);
 void messageHandler(byte messageType, byte msg[], byte msgSize);
+void sendAdvancedAction(byte actionIndex, ActionGroupSettings setting);
+void updateScienceLED(unsigned long now);
+void updateAdvancedActionLEDs();
 
 
 // Setup function
@@ -553,6 +596,8 @@ void loop() {
   Control_mode_pot();
   LEDS_ALARM_PANEL();
   updateAlarmLEDs(now);
+  updateAdvancedActionLEDs();
+  updateScienceLED(now);
 
   // All LED changes above only touched the state bytes. Write them out once.
   flushLEDs();
@@ -631,6 +676,7 @@ void registerChannels() {
   mySimpit.registerChannel(ATMO_CONDITIONS_MESSAGE);
   mySimpit.registerChannel(ELECTRIC_MESSAGE);
   mySimpit.registerChannel(FLIGHT_STATUS_MESSAGE);
+  mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
 }
 
 // One handshake attempt. init() blocks up to ~1.1s when KSP does not answer.
@@ -709,13 +755,11 @@ void handleSwitches(unsigned long now) {
     lastDebounceTimeSolarSwitch = now;
 
     if (readingSolarSwitch == LOW) {  // Button pressed
-      mySimpit.deactivateCAG(9);
-      //mySimpit.toggleCAG(9);
+      sendAdvancedAction(ADVANCED_SOLAR_ACTION, AG_ACTION_DEACTIVATE);
       digitalWrite(LED_SOLAR, LOW);
     } else {  // Button released
-     
-      //mySimpit.toggleCAG(9);
-      mySimpit.activateCAG(9);
+
+      sendAdvancedAction(ADVANCED_SOLAR_ACTION, AG_ACTION_ACTIVATE);
       digitalWrite(LED_SOLAR, HIGH);
     }
 
@@ -731,11 +775,11 @@ void handleSwitches(unsigned long now) {
 
     if (readingRADSSwitch == LOW) {  // Button pressed
       
-      mySimpit.deactivateCAG(10);
+      sendAdvancedAction(ADVANCED_RADIATOR_ACTION, AG_ACTION_DEACTIVATE);
       digitalWrite(LED_RADS, LOW);
 
     } else {  // Button released
-     mySimpit.activateCAG(10);
+     sendAdvancedAction(ADVANCED_RADIATOR_ACTION, AG_ACTION_ACTIVATE);
       digitalWrite(LED_RADS, HIGH);
       
     }
@@ -989,7 +1033,7 @@ void handleButtons(unsigned long now) {
     if (readingScienceButton == LOW) {
       scienceButtonPressed = !scienceButtonPressed;
       mySimpit.printToKSP("Science button pressed", PRINT_TO_SCREEN);
-      mySimpit.toggleCAG(8);
+      sendAdvancedAction(ADVANCED_SCIENCE_ACTION, AG_ACTION_TOGGLE);
      
     }
     lastDebounceTimeScienceButton = now;
@@ -1972,6 +2016,16 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
           LEDS_ALARM_PANEL();
         }
       } break;
+
+    case ADVANCED_ACTIONSTATUS_MESSAGE:
+      if (msgSize == sizeof(advancedActionStatusMessage)) {
+        myAdvancedActions = parseMessage<advancedActionStatusMessage>(msg);
+        solarStatus = myAdvancedActions.getActionStatus(ADVANCED_SOLAR_ACTION);
+        radiatorStatus = myAdvancedActions.getActionStatus(ADVANCED_RADIATOR_ACTION);
+        scienceStatus = myAdvancedActions.getActionStatus(ADVANCED_SCIENCE_ACTION);
+        scienceAvailable = (scienceStatus == 1);
+      }
+      break;
   }
   
 }
@@ -2444,6 +2498,3 @@ void updateSASAnimation(unsigned long now) {
     setLED(SASmodeLEDs[targetIndex], true);
   }
 }
-
-
-
