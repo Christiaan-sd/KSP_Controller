@@ -233,6 +233,8 @@ unsigned long ageMaxMs = 0;
 
 extern byte solarStatus;
 extern byte radiatorStatus;
+extern byte brakesStatus;
+extern byte gearStatus;
 extern bool scienceAvailable;
 extern bool scienceLedState;
 extern unsigned long lastScienceBlink;
@@ -261,6 +263,7 @@ void sendAdvancedAction(byte actionIndex, ActionGroupSettings setting) {
 void updateScienceLED(unsigned long now) {
   if (potentialScience <= SCIENCE_BLINK_THRESHOLD) {
     scienceLedState = false;
+    lastScienceBlink = now;
     digitalWrite(LED_SCIENCE, LOW);
     return;
   }
@@ -275,6 +278,8 @@ void updateScienceLED(unsigned long now) {
 void updateAdvancedActionLEDs() {
   digitalWrite(LED_SOLAR, solarStatus == 1 ? HIGH : LOW);
   digitalWrite(LED_RADS, radiatorStatus == 1 ? HIGH : LOW);
+  setLED(LED_BRAKES, brakesStatus == 1);
+  setLED(LED_GEARS, gearStatus == 1);
 }
 
 // Shift register batching: setLED() only marks bits dirty, the loop writes once
@@ -304,6 +309,8 @@ unsigned long lastLCDUpdate = 0;
 // Variables to store the last debounce time
 unsigned long lastDebounceTimeRight = 0;
 unsigned long lastDebounceTimeLeft = 0;
+int lastLCDRightState = HIGH;
+int lastLCDLeftState = HIGH;
 unsigned long lastDebounceTimeJoystickTranslation = 0;
 unsigned long lastDebounceTimeJoystickRotation = 0;
 unsigned long lastDebounceTimeBrakeSwitch = 0;
@@ -443,12 +450,14 @@ advancedActionStatusMessage myAdvancedActions;
 
 byte solarStatus = 0;
 byte radiatorStatus = 0;
+byte brakesStatus = 0;
+byte gearStatus = 0;
 byte scienceStatus = 0;
 bool scienceAvailable = false;
 bool scienceLedState = false;
 unsigned long lastScienceBlink = 0;
 const unsigned long SCIENCE_BLINK_INTERVAL = 400;
-const float SCIENCE_BLINK_THRESHOLD = 5.0f;
+const float SCIENCE_BLINK_THRESHOLD = 10.0f;
 const unsigned long SCIENCE_RESET_HOLD_TIME = 3000;
 float potentialScience = 0.0f;
 unsigned long scienceButtonDownAt = 0;
@@ -1447,7 +1456,8 @@ void handleLCDButtons(unsigned long now) {
   int readingLCDSwitchPinLeft = digitalRead(LCD_BUTTON_PIN_LEFT);
 
   // Handle the right button
-  if (readingLCDSwitchPinRight == LOW && (now - lastDebounceTimeRight) > DEBOUNCE_DELAY) {
+  if (readingLCDSwitchPinRight == LOW && lastLCDRightState == HIGH &&
+      (now - lastDebounceTimeRight) > DEBOUNCE_DELAY) {
     if (lcdScreenCase < 11) {
       lcdScreenCase++;
       lcdScreenCaseBeforeAlarm = lcdScreenCase;
@@ -1472,9 +1482,11 @@ void handleLCDButtons(unsigned long now) {
     }
     lastDebounceTimeRight = now;
   }
+  lastLCDRightState = readingLCDSwitchPinRight;
 
   // Handle the left button
-  if (readingLCDSwitchPinLeft == LOW && (now - lastDebounceTimeLeft) > DEBOUNCE_DELAY) {
+  if (readingLCDSwitchPinLeft == LOW && lastLCDLeftState == HIGH &&
+      (now - lastDebounceTimeLeft) > DEBOUNCE_DELAY) {
     if (lcdScreenCase > 0) {
       lcdScreenCase--;
       lcdScreenCaseBeforeAlarm = lcdScreenCase;
@@ -1491,6 +1503,7 @@ void handleLCDButtons(unsigned long now) {
     }
     lastDebounceTimeLeft = now;
   }
+  lastLCDLeftState = readingLCDSwitchPinLeft;
 }
 
 // Function to handle temperature alarms
@@ -2058,8 +2071,11 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
         myAdvancedActions = parseMessage<advancedActionStatusMessage>(msg);
         solarStatus = myAdvancedActions.getActionStatus(ADVANCED_SOLAR_ACTION);
         radiatorStatus = myAdvancedActions.getActionStatus(ADVANCED_RADIATOR_ACTION);
+        brakesStatus = myAdvancedActions.getActionStatus(ADVANCED_BRAKES_ACTION);
+        gearStatus = myAdvancedActions.getActionStatus(ADVANCED_GEAR_ACTION);
         scienceStatus = myAdvancedActions.getActionStatus(ADVANCED_SCIENCE_ACTION);
         scienceAvailable = (scienceStatus == 1);
+        updateAdvancedActionLEDs();
       }
       break;
     case SCIENCE_VALUE_MESSAGE:
