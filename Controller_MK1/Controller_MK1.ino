@@ -238,8 +238,8 @@ extern byte gearStatus;
 extern bool scienceAvailable;
 extern bool scienceLedState;
 extern unsigned long lastScienceBlink;
-extern const unsigned long SCIENCE_BLINK_INTERVAL;
-extern const float SCIENCE_BLINK_THRESHOLD;
+extern unsigned long scienceBlinkInterval;
+extern float scienceBlinkThreshold;
 extern float potentialScience;
 
 // Milliseconds since the last inbound packet. Always read millis() fresh here:
@@ -261,14 +261,14 @@ void sendAdvancedAction(byte actionIndex, ActionGroupSettings setting) {
 }
 
 void updateScienceLED(unsigned long now) {
-  if (potentialScience <= SCIENCE_BLINK_THRESHOLD) {
+  if (potentialScience <= scienceBlinkThreshold) {
     scienceLedState = false;
     lastScienceBlink = now;
     digitalWrite(LED_SCIENCE, LOW);
     return;
   }
 
-  if (now - lastScienceBlink >= SCIENCE_BLINK_INTERVAL) {
+  if (now - lastScienceBlink >= scienceBlinkInterval) {
     lastScienceBlink = now;
     scienceLedState = !scienceLedState;
     digitalWrite(LED_SCIENCE, scienceLedState ? HIGH : LOW);
@@ -456,8 +456,8 @@ byte scienceStatus = 0;
 bool scienceAvailable = false;
 bool scienceLedState = false;
 unsigned long lastScienceBlink = 0;
-const unsigned long SCIENCE_BLINK_INTERVAL = 400;
-const float SCIENCE_BLINK_THRESHOLD = 10.0f;
+unsigned long scienceBlinkInterval = 400;
+float scienceBlinkThreshold = 10.0f;
 const unsigned long SCIENCE_RESET_HOLD_TIME = 3000;
 float potentialScience = 0.0f;
 unsigned long scienceButtonDownAt = 0;
@@ -695,6 +695,8 @@ void registerChannels() {
   mySimpit.registerChannel(FLIGHT_STATUS_MESSAGE);
   mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
   mySimpit.registerChannel(SCIENCE_VALUE_MESSAGE);
+  mySimpit.registerChannel(SCIENCE_THRESHOLD_MESSAGE);
+  mySimpit.registerChannel(SCIENCE_BLINK_INTERVAL_MESSAGE);
 }
 
 // One handshake attempt. init() blocks up to ~1.1s when KSP does not answer.
@@ -1656,7 +1658,7 @@ void updateLCD() {
     } break;
     case 11:
       dtostrf(potentialScience, 0, 1, lcdNumA);
-      dtostrf(SCIENCE_BLINK_THRESHOLD, 0, 1, lcdNumB);
+      dtostrf(scienceBlinkThreshold, 0, 1, lcdNumB);
       snprintf(lcdRowA, sizeof(lcdRowA), "Science: %s", lcdNumA);
       snprintf(lcdRowB, sizeof(lcdRowB), "Blink > %s", lcdNumB);
       break;
@@ -2081,6 +2083,21 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
     case SCIENCE_VALUE_MESSAGE:
       if (msgSize == sizeof(float)) {
         memcpy(&potentialScience, msg, sizeof(float));
+      }
+      break;
+    case SCIENCE_THRESHOLD_MESSAGE:
+      if (msgSize == sizeof(float)) {
+        memcpy(&scienceBlinkThreshold, msg, sizeof(float));
+        if (scienceBlinkThreshold < 0.0f) scienceBlinkThreshold = 0.0f;
+      }
+      break;
+    case SCIENCE_BLINK_INTERVAL_MESSAGE:
+      if (msgSize == sizeof(float)) {
+        float interval;
+        memcpy(&interval, msg, sizeof(float));
+        if (interval >= 50.0f && interval <= 10000.0f) {
+          scienceBlinkInterval = (unsigned long)interval;
+        }
       }
       break;
   }
