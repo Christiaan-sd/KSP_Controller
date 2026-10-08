@@ -447,6 +447,9 @@ atmoConditionsMessage myAtmoConditions;
 resourceMessage myElectric;
 flightStatusMessage myFlightStatus;
 advancedActionStatusMessage myAdvancedActions;
+apsidesMessage myApsides;
+apsidesTimeMessage myApsidesTime;
+dynamicPressureMessage myDynamicPressure;
 
 byte solarStatus = 0;
 byte radiatorStatus = 0;
@@ -463,6 +466,10 @@ float potentialScience = 0.0f;
 unsigned long scienceButtonDownAt = 0;
 bool scienceResetSent = false;
 bool scienceScreenBacklight = false;
+bool apoapsisDataReceived = false;
+bool apoapsisTimeReceived = false;
+bool dynamicPressureReceived = false;
+float peakDynamicPressureKPa = 0.0f;
 
 // Custom LCD symbols
 byte deltaChar[8] = {
@@ -473,6 +480,28 @@ byte deltaChar[8] = {
   0b10001,
   0b11111,
   0b00000,
+  0b00000
+};
+
+byte upArrowChar[8] = {
+  0b00100,
+  0b01110,
+  0b10101,
+  0b00100,
+  0b00100,
+  0b00100,
+  0b00100,
+  0b00000
+};
+
+byte downArrowChar[8] = {
+  0b00100,
+  0b00100,
+  0b00100,
+  0b00100,
+  0b10101,
+  0b01110,
+  0b00100,
   0b00000
 };
 
@@ -516,6 +545,8 @@ void setup() {
   lcd.begin(Wire);
   lcd.setFastBacklight(255, 255, 255);
   lcd.createChar(1, deltaChar); // Custom delta glyph, slot 1 (slot 0 would be a NUL in strings)
+  lcd.createChar(2, upArrowChar);
+  lcd.createChar(3, downArrowChar);
   Wire.setClock(400000); // Optional - set I2C SCL to High Speed Mode of 400kHz
   
   // Set pin modes
@@ -695,6 +726,9 @@ void registerChannels() {
   mySimpit.registerChannel(FLIGHT_STATUS_MESSAGE);
   mySimpit.registerChannel(ADVANCED_ACTIONSTATUS_MESSAGE);
   mySimpit.registerChannel(SCIENCE_VALUE_MESSAGE);
+  mySimpit.registerChannel(APSIDES_MESSAGE);
+  mySimpit.registerChannel(APSIDESTIME_MESSAGE);
+  mySimpit.registerChannel(DYNAMIC_PRESSURE_MESSAGE);
   mySimpit.registerChannel(SCIENCE_THRESHOLD_MESSAGE);
   mySimpit.registerChannel(SCIENCE_BLINK_INTERVAL_MESSAGE);
 }
@@ -708,6 +742,8 @@ bool tryConnect() {
   isConnected = true;
   lastInboundMessageTime = millis();
   lastHeartbeatSent = millis();
+  dynamicPressureReceived = false;
+  peakDynamicPressureKPa = 0.0f;
 
   mySimpit.printToKSP("Connected", PRINT_TO_SCREEN);
   mySimpit.inboundHandler(messageHandler);
@@ -1460,7 +1496,7 @@ void handleLCDButtons(unsigned long now) {
   // Handle the right button
   if (readingLCDSwitchPinRight == LOW && lastLCDRightState == HIGH &&
       (now - lastDebounceTimeRight) > DEBOUNCE_DELAY) {
-    if (lcdScreenCase < 11) {
+    if (lcdScreenCase < 13) {
       lcdScreenCase++;
       lcdScreenCaseBeforeAlarm = lcdScreenCase;
       if (lcdScreenCase == 9) {
@@ -1510,7 +1546,11 @@ void handleLCDButtons(unsigned long now) {
 
 // Function to handle temperature alarms
 void handleTempAlarm() {
-  if (myTemplimits.skinTempLimitPercentage > 40 || myTemplimits.tempLimitPercentage > 40) {
+  bool overTemperature =
+      myTemplimits.skinTempLimitPercentage > 40 ||
+      myTemplimits.tempLimitPercentage > 40;
+
+  if (overTemperature) {
     if (!lcdAlarmState && !lcdAlarmStateOverride) {
       lcdScreenCaseBeforeAlarm = lcdScreenCase; // Save the current state before alarm
       lcdScreenCase = 98;
@@ -1520,17 +1560,18 @@ void handleTempAlarm() {
       lcd.setBacklight(255, 0, 0);
       lcdForceRedraw();
     }
-  } else {
-    if (lcdAlarmState) {
-      lcdAlarmState = false;
-      lcdAlarmStateOverride = false;
-      lcdScreenCase = lcdScreenCaseBeforeAlarm;\
-      setLED(LED_MASTER_ALARM, false);
-      setLED(LED_TEMPRATURE, false);
-      lcd.setBacklight(255, 255, 255);
-      lcdForceRedraw();
-    }
+    return;
   }
+
+  if (lcdAlarmState) {
+    lcdAlarmState = false;
+    lcdScreenCase = lcdScreenCaseBeforeAlarm;
+    setLED(LED_MASTER_ALARM, false);
+    setLED(LED_TEMPRATURE, false);
+    lcd.setBacklight(255, 255, 255);
+    lcdForceRedraw();
+  }
+  lcdAlarmStateOverride = false;
 }
 
 // LCD rendering.
@@ -1555,23 +1596,14 @@ void lcdSetLines(const char *a, const char *b) {
   snprintf(lcdBuf, sizeof(lcdBuf), "%-16.16s%-16.16s", a, b);
 }
 
-// The SerLCD wraps text from the end of row 0 to the start of row 1, and from
-// the end of row 1 back to the start of row 0. Writing exactly 32 characters
-// therefore leaves the cursor where it began and setCursor() is never needed,
-// which saves its 50ms delay. Every write in this sketch goes through here, so
-// the cursor stays on that 32 character grid.
-// Set to 0 if the display turns out not to wrap: then each redraw costs 50ms
-// more but the position is set explicitly.
-#define LCD_ASSUME_WRAP 1
-
 void lcdCommit() {
   if (strcmp(lcdBuf, lcdShown) == 0) {
     return;  // Nothing changed, no I2C traffic and no library delays at all
   }
   strcpy(lcdShown, lcdBuf);
-#if !LCD_ASSUME_WRAP
+  // Alarm updates and backlight commands can leave the display cursor at a
+  // different offset. Always anchor changed frames before writing both rows.
   lcd.setCursor(0, 0);
-#endif
   lcd.print(lcdBuf);
 }
 
@@ -1661,6 +1693,58 @@ void updateLCD() {
       dtostrf(scienceBlinkThreshold, 0, 1, lcdNumB);
       snprintf(lcdRowA, sizeof(lcdRowA), "Science: %s", lcdNumA);
       snprintf(lcdRowB, sizeof(lcdRowB), "Blink > %s", lcdNumB);
+      break;
+    case 12:
+      if (!apoapsisDataReceived || !isfinite(myApsides.apoapsis)) {
+        snprintf(lcdRowA, sizeof(lcdRowA), "AP unavailable");
+      } else {
+        float apoapsisKm = myApsides.apoapsis / 1000.0f;
+        if (apoapsisKm >= 1000000.0f) {
+          snprintf(lcdRowA, sizeof(lcdRowA), "AP >999999 km");
+        } else if (apoapsisKm >= 1000.0f) {
+          dtostrf(apoapsisKm, 0, 0, lcdNumA);
+          snprintf(lcdRowA, sizeof(lcdRowA), "AP %s km", lcdNumA);
+        } else {
+          dtostrf(apoapsisKm, 0, 1, lcdNumA);
+          snprintf(lcdRowA, sizeof(lcdRowA), "AP %s km", lcdNumA);
+        }
+      }
+
+      if (!apoapsisTimeReceived || myApsidesTime.apoapsis < 0 ||
+          myApsidesTime.apoapsis > 86400) {
+        snprintf(lcdRowB, sizeof(lcdRowB), "TTA unavailable");
+      } else {
+        char trend = '-';
+        if (myApsidesTime.apoapsis < 40) {
+          trend = 2;
+        } else if (myApsidesTime.apoapsis > 60) {
+          trend = 3;
+        }
+        snprintf(lcdRowB, sizeof(lcdRowB), "TTA %lus %c",
+                 (unsigned long)myApsidesTime.apoapsis, trend);
+      }
+      break;
+    case 13:
+      if (!dynamicPressureReceived) {
+        snprintf(lcdRowA, sizeof(lcdRowA), "Q: unavailable");
+        snprintf(lcdRowB, sizeof(lcdRowB), "Peak: no data");
+      } else {
+        if (myDynamicPressure.kiloPascals >= 1000000.0f) {
+          snprintf(lcdRowA, sizeof(lcdRowA), "Q: >999999 kPa");
+        } else {
+          dtostrf(myDynamicPressure.kiloPascals, 0,
+                  myDynamicPressure.kiloPascals < 1000.0f ? 2 : 0, lcdNumA);
+          snprintf(lcdRowA, sizeof(lcdRowA), "Q: %s kPa", lcdNumA);
+        }
+
+        if (peakDynamicPressureKPa >= 1000000.0f) {
+          snprintf(lcdRowB, sizeof(lcdRowB), "Peak: >999999kPa");
+        } else {
+          dtostrf(peakDynamicPressureKPa, 0,
+                  peakDynamicPressureKPa < 1000.0f ? 2 : 0, lcdNumB);
+          snprintf(lcdRowB, sizeof(lcdRowB), "Peak: %skPa", lcdNumB);
+        }
+      }
       break;
     case 98:
       snprintf(lcdRowA, sizeof(lcdRowA), "PART TEMP!: %d", myTemplimits.tempLimitPercentage);
@@ -2083,6 +2167,30 @@ void messageHandler(byte messageType, byte msg[], byte msgSize) {
     case SCIENCE_VALUE_MESSAGE:
       if (msgSize == sizeof(float)) {
         memcpy(&potentialScience, msg, sizeof(float));
+      }
+      break;
+    case APSIDES_MESSAGE:
+      if (msgSize == sizeof(apsidesMessage)) {
+        myApsides = parseMessage<apsidesMessage>(msg);
+        apoapsisDataReceived = true;
+      }
+      break;
+    case APSIDESTIME_MESSAGE:
+      if (msgSize == sizeof(apsidesTimeMessage)) {
+        myApsidesTime = parseMessage<apsidesTimeMessage>(msg);
+        apoapsisTimeReceived = true;
+      }
+      break;
+    case DYNAMIC_PRESSURE_MESSAGE:
+      if (msgSize == sizeof(dynamicPressureMessage)) {
+        dynamicPressureMessage received = parseMessage<dynamicPressureMessage>(msg);
+        if (isfinite(received.kiloPascals) && received.kiloPascals >= 0.0f) {
+          myDynamicPressure = received;
+          dynamicPressureReceived = true;
+          if (received.kiloPascals > peakDynamicPressureKPa) {
+            peakDynamicPressureKPa = received.kiloPascals;
+          }
+        }
       }
       break;
     case SCIENCE_THRESHOLD_MESSAGE:
